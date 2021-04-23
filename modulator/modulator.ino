@@ -174,7 +174,10 @@ const PROGMEM uint16_t DACLookup_FullSine_5Bit[32] =
 void setup(void) {
   Serial.begin(9600);
   Serial.println("Hello!");
-
+  
+  // initialize digital pin LED_BUILTIN as an output.
+  pinMode(LED_BUILTIN, OUTPUT);
+  
   // For Adafruit MCP4725A1 the address is 0x62 (default) or 0x63 (ADDR pin tied to VCC)
   // For MCP4725A0 the address is 0x60 or 0x61
   // For MCP4725A2 the address is 0x64 or 0x65
@@ -192,33 +195,37 @@ int lerp(uint16_t a, uint16_t b, uint16_t i, uint16_t steps) {
 
 void loop(void) {
     static uint16_t step = 0; // current table step
-    static uint16_t steps = 24; // interpolate between table values for this many steps
+    static uint16_t steps = 240; // interpolate between table values for this many steps
     static unsigned long lastTriggerMs = 0;
     unsigned long nowMs = millis();
+    static bool on = false;
+    static int lastRead = 0;
 
     // look for triggers and reset to near the peak of the sine wave
-    if (nowMs - lastTriggerMs > 250) {
+    if (nowMs - lastTriggerMs > 150) {
       // read the input on analog pin 0:
       int sensorValue = analogRead(A0);
-      // Convert the analog reading (which goes from 0 - 1023) to a voltage (0 - 5V):
-      float voltage = sensorValue * (5.0f / 1023.0f);
-      // print out the value you read:
-      if (voltage > 4.0f) {
-//        Serial.println(voltage);
+//      Serial.print("> ");
+//      Serial.println(sensorValue);
+      // The analog reading goes from 0 - 1023
+      if (sensorValue == 1023 && lastRead != sensorValue) {
         step = 56;
+        steps = 24;
         lastTriggerMs = nowMs;
+
+        // toggle the LED each retrig
+        digitalWrite(LED_BUILTIN, on ? LOW : HIGH);
+        on = !on;
       }
+      lastRead = sensorValue;
     }
 
     // set the LFO rate based on A1
 //    int sensorValue = analogRead(A1);
+//    Serial.print("< ");
 //    Serial.println(sensorValue);
 //    steps = sensorValue;
     
-    // Convert the analog reading (which goes from 0 - 1023) to a voltage (0 - 5V):
-    float voltage = sensorValue * (5.0f / 1023.0f);
-
-      
     // Push out the right lookup table, depending on the selected resolution
     #if DAC_RESOLUTION == 5
       for (i = 0; i < 32; i++)
