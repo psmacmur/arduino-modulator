@@ -220,11 +220,11 @@ void loop(void) {
       lastRead = sensorValue;
     }
 
-    // set the LFO rate based on A1
-//    int sensorValue = analogRead(A1);
+    // set the LFO rate based on A2
+    int sensorValue = analogRead(A2);
 //    Serial.print("< ");
 //    Serial.println(sensorValue);
-//    steps = sensorValue;
+    steps = sensorValue;
     
     // Push out the right lookup table, depending on the selected resolution
     #if DAC_RESOLUTION == 5
