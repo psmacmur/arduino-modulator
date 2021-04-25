@@ -1,3 +1,15 @@
+/*!
+ * 
+    Inputs: 
+    A0: Trigger bitsnap
+    A2: interpSteps pot
+    D8: Button (TBD)
+
+    Ouputs:
+    MCP4725
+ */
+
+// Adapted from:
 /**************************************************************************/
 /*!
     @file     sinewave.pde
@@ -12,6 +24,7 @@
     Adafruit invests time and resources providing this open source code,
     please support Adafruit and open-source hardware by purchasing
     products from Adafruit!
+
 */
 /**************************************************************************/
 #include <Wire.h>
@@ -19,8 +32,12 @@
 
 Adafruit_MCP4725 dac;
 
-// Set this value to 9, 8, 7, 6 or 5 to adjust the resolution
-#define DAC_RESOLUTION    (8)
+const int buttonPin = 8;
+const int ledPin = LED_BUILTIN;
+const int envSteps = 8;
+const int envStartStep = 128;
+const int defaultInterpSteps = 120;
+int interpSteps = defaultInterpSteps;
 
 /* Note: If flash space is tight a quarter sine wave is enough
    to generate full sine and cos waves, but some additional
@@ -95,97 +112,6 @@ const PROGMEM uint16_t DACLookup_FullSine_9Bit[512] =
   1847, 1872, 1897, 1922, 1948, 1973, 1998, 2023
 };
 
-const PROGMEM uint16_t DACLookup_FullSine_8Bit[256] =
-{
-  2048, 2098, 2148, 2198, 2248, 2298, 2348, 2398,
-  2447, 2496, 2545, 2594, 2642, 2690, 2737, 2784,
-  2831, 2877, 2923, 2968, 3013, 3057, 3100, 3143,
-  3185, 3226, 3267, 3307, 3346, 3385, 3423, 3459,
-  3495, 3530, 3565, 3598, 3630, 3662, 3692, 3722,
-  3750, 3777, 3804, 3829, 3853, 3876, 3898, 3919,
-  3939, 3958, 3975, 3992, 4007, 4021, 4034, 4045,
-  4056, 4065, 4073, 4080, 4085, 4089, 4093, 4094,
-  4095, 4094, 4093, 4089, 4085, 4080, 4073, 4065,
-  4056, 4045, 4034, 4021, 4007, 3992, 3975, 3958,
-  3939, 3919, 3898, 3876, 3853, 3829, 3804, 3777,
-  3750, 3722, 3692, 3662, 3630, 3598, 3565, 3530,
-  3495, 3459, 3423, 3385, 3346, 3307, 3267, 3226,
-  3185, 3143, 3100, 3057, 3013, 2968, 2923, 2877,
-  2831, 2784, 2737, 2690, 2642, 2594, 2545, 2496,
-  2447, 2398, 2348, 2298, 2248, 2198, 2148, 2098,
-  2048, 1997, 1947, 1897, 1847, 1797, 1747, 1697,
-  1648, 1599, 1550, 1501, 1453, 1405, 1358, 1311,
-  1264, 1218, 1172, 1127, 1082, 1038,  995,  952,
-   910,  869,  828,  788,  749,  710,  672,  636,
-   600,  565,  530,  497,  465,  433,  403,  373,
-   345,  318,  291,  266,  242,  219,  197,  176,
-   156,  137,  120,  103,   88,   74,   61,   50,
-    39,   30,   22,   15,   10,    6,    2,    1,
-     0,    1,    2,    6,   10,   15,   22,   30,
-    39,   50,   61,   74,   88,  103,  120,  137,
-   156,  176,  197,  219,  242,  266,  291,  318,
-   345,  373,  403,  433,  465,  497,  530,  565,
-   600,  636,  672,  710,  749,  788,  828,  869,
-   910,  952,  995, 1038, 1082, 1127, 1172, 1218,
-  1264, 1311, 1358, 1405, 1453, 1501, 1550, 1599,
-  1648, 1697, 1747, 1797, 1847, 1897, 1947, 1997
-};
-
-const PROGMEM uint16_t DACLookup_FullSine_7Bit[128] =
-{
-  2048, 2148, 2248, 2348, 2447, 2545, 2642, 2737,
-  2831, 2923, 3013, 3100, 3185, 3267, 3346, 3423,
-  3495, 3565, 3630, 3692, 3750, 3804, 3853, 3898,
-  3939, 3975, 4007, 4034, 4056, 4073, 4085, 4093,
-  4095, 4093, 4085, 4073, 4056, 4034, 4007, 3975,
-  3939, 3898, 3853, 3804, 3750, 3692, 3630, 3565,
-  3495, 3423, 3346, 3267, 3185, 3100, 3013, 2923,
-  2831, 2737, 2642, 2545, 2447, 2348, 2248, 2148,
-  2048, 1947, 1847, 1747, 1648, 1550, 1453, 1358,
-  1264, 1172, 1082,  995,  910,  828,  749,  672,
-   600,  530,  465,  403,  345,  291,  242,  197,
-   156,  120,   88,   61,   39,   22,   10,    2,
-     0,    2,   10,   22,   39,   61,   88,  120,
-   156,  197,  242,  291,  345,  403,  465,  530,
-   600,  672,  749,  828,  910,  995, 1082, 1172,
-  1264, 1358, 1453, 1550, 1648, 1747, 1847, 1947
-};
-
-const PROGMEM uint16_t DACLookup_FullSine_6Bit[64] =
-{
-  2048, 2248, 2447, 2642, 2831, 3013, 3185, 3346,
-  3495, 3630, 3750, 3853, 3939, 4007, 4056, 4085,
-  4095, 4085, 4056, 4007, 3939, 3853, 3750, 3630,
-  3495, 3346, 3185, 3013, 2831, 2642, 2447, 2248,
-  2048, 1847, 1648, 1453, 1264, 1082,  910,  749,
-   600,  465,  345,  242,  156,   88,   39,   10,
-     0,   10,   39,   88,  156,  242,  345,  465,
-   600,  749,  910, 1082, 1264, 1453, 1648, 1847
-};
-
-const PROGMEM uint16_t DACLookup_FullSine_5Bit[32] =
-{
-  2048, 2447, 2831, 3185, 3495, 3750, 3939, 4056,
-  4095, 4056, 3939, 3750, 3495, 3185, 2831, 2447,
-  2048, 1648, 1264,  910,  600,  345,  156,   39,
-     0,   39,  156,  345,  600,  910, 1264, 1648
-};
-
-void setup(void) {
-  Serial.begin(9600);
-  Serial.println("Hello!");
-  
-  // initialize digital pin LED_BUILTIN as an output.
-  pinMode(LED_BUILTIN, OUTPUT);
-  
-  // For Adafruit MCP4725A1 the address is 0x62 (default) or 0x63 (ADDR pin tied to VCC)
-  // For MCP4725A0 the address is 0x60 or 0x61
-  // For MCP4725A2 the address is 0x64 or 0x65
-  dac.begin(0x60);
-
-  Serial.println("Generating a sine wave");
-}
-
 int lerp(uint16_t a, uint16_t b, uint16_t i, uint16_t steps) {
   float t = float(i) / float(steps);
   float delta = float(b) - float(a);
@@ -193,13 +119,46 @@ int lerp(uint16_t a, uint16_t b, uint16_t i, uint16_t steps) {
   return result;
 }
 
+void onButtonUp() {
+  interpSteps = defaultInterpSteps;
+}
+
+void checkButton() {
+    static int buttonState = 0;
+    static int buttonLastState = 0;
+
+    // read the state of the pushbutton value:
+    buttonState = digitalRead(buttonPin);
+  
+    // check if the pushbutton is pressed. If it is, the buttonState is HIGH:
+    if (buttonState == HIGH && buttonLastState != buttonState) {
+        onButtonUp();
+    }
+    buttonLastState = buttonState;
+}
+
+void setup(void) {
+  Serial.begin(9600);
+  Serial.println("Hello!");
+  
+  // initialize digital pin LED_BUILTIN as an output.
+  pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(buttonPin, INPUT);
+  
+  // For Adafruit MCP4725A1 the address is 0x62 (default) or 0x63 (ADDR pin tied to VCC)
+  // For MCP4725A0 the address is 0x60 or 0x61
+  // For MCP4725A2 the address is 0x64 or 0x65
+  dac.begin(0x60);
+}
+
 void loop(void) {
     static uint16_t step = 0; // current table step
-    static uint16_t steps = 240; // interpolate between table values for this many steps
     static unsigned long lastTriggerMs = 0;
     unsigned long nowMs = millis();
     static bool on = false;
     static int lastRead = 0;
+
+    checkButton();
 
     // look for triggers and reset to near the peak of the sine wave
     if (nowMs - lastTriggerMs > 150) {
@@ -209,8 +168,8 @@ void loop(void) {
 //      Serial.println(sensorValue);
       // The analog reading goes from 0 - 1023
       if (sensorValue == 1023 && lastRead != sensorValue) {
-        step = 56;
-        steps = 24;
+        step = envStartStep;
+        interpSteps = envSteps;
         lastTriggerMs = nowMs;
 
         // toggle the LED each retrig
@@ -220,46 +179,24 @@ void loop(void) {
       lastRead = sensorValue;
     }
 
-    // set the LFO rate based on A2
-    int sensorValue = analogRead(A2);
+    // set the LFO interpSteps based on A2
+//    int sensorValue = analogRead(A2);
 //    Serial.print("< ");
 //    Serial.println(sensorValue);
-    steps = sensorValue;
+//    steps = sensorValue;
     
-    // Push out the right lookup table, depending on the selected resolution
-    #if DAC_RESOLUTION == 5
-      for (i = 0; i < 32; i++)
-      {
-        dac.setVoltage(pgm_read_word(&(DACLookup_FullSine_5Bit[i])), false);
-      }
-    #elif DAC_RESOLUTION == 6
-      for (i = 0; i < 64; i++)
-      {
-        dac.setVoltage(pgm_read_word(&(DACLookup_FullSine_6Bit[i])), false);
-      }
-    #elif DAC_RESOLUTION == 7
-      for (i = 0; i < 128; i++)
-      {
-        dac.setVoltage(pgm_read_word(&(DACLookup_FullSine_7Bit[i])), false);
-      }
-    #elif DAC_RESOLUTION == 9
-      for (i = 0; i < 512; i++)
-      {
-        dac.setVoltage(pgm_read_word(&(DACLookup_FullSine_9Bit[i])), false);
-      }
-    #else    // Use 8-bit data if nothing else is specified
+
       // Smooth it out with linear interpolation between samples
       uint16_t i;
-      const uint16_t nextStep = (step + 1) % 256;
-      const uint16_t a = pgm_read_word(&DACLookup_FullSine_8Bit[step]);
-      const uint16_t b = pgm_read_word(&DACLookup_FullSine_8Bit[nextStep]);
+      const uint16_t nextStep = (step + 1) % 512;
+      const uint16_t a = pgm_read_word(&DACLookup_FullSine_9Bit[step]);
+      const uint16_t b = pgm_read_word(&DACLookup_FullSine_9Bit[nextStep]);
       uint16_t t;
-      for (i = 0; i < steps; i++)
+      for (i = 0; i < interpSteps; i++)
       {
-        t = lerp(a, b, i, steps);
+        t = lerp(a, b, i, interpSteps);
 //        Serial.println(t);
         dac.setVoltage(t, false);
       }
       step = nextStep;
-    #endif
 }
