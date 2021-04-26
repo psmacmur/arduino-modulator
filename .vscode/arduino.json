@@ -1,0 +1,6 @@
+{
+    "programmer": "AVR ISP",
+    "board": "arduino:avr:leonardo",
+    "port": "COM10",
+    "sketch": "sequencer\\sequencer.ino"
+}

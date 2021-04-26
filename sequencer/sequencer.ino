@@ -23,12 +23,34 @@
 
 Adafruit_MCP4725 dac;
 
+const int playPin = 10;
+const int seqBtnCount = 4;
+const int seqPin[seqBtnCount] = { 4, 6, 8, 9 };
+const int ledPin = LED_BUILTIN;
+const int trigPin = A0;
+const int PLAY_MODE = 0;
+const int REC_MODE = 1;
+const int seqLen = 16; // 16 step sequencer
+int mode = PLAY_MODE;
+int lastPitch = 0;
+int sequence[seqLen] = { 
+  0, 1, 2, 3,
+  -1, -1, -1, -1,
+  -1, -1, -1, -1,
+  -1, -1, -1, -1
+};
+int seqPos = 0;
+
 void setup(void) {
   Serial.begin(9600);
   Serial.println("Sequencer init");
   
   // initialize digital pin LED_BUILTIN as an output.
   pinMode(LED_BUILTIN, OUTPUT);
+  pinMode(playPin, INPUT_PULLUP);
+  for (int i = 0; i < seqBtnCount; i++) {
+    pinMode(seqPin[i], INPUT_PULLUP);
+  }
   
   // For Adafruit MCP4725A1 the address is 0x62 (default) or 0x63 (ADDR pin tied to VCC)
   // For MCP4725A0 the address is 0x60 or 0x61
@@ -43,18 +65,11 @@ int lerp(uint16_t a, uint16_t b, uint16_t i, uint16_t steps) {
   return result;
 }
 
-
-const int buttonPin = 8;
-const int ledPin = LED_BUILTIN;
-const int trigPin = A1;
-const int pitchPin = A0;
-const int PLAY_MODE = 0;
-const int REC_MODE = 1;
-int mode = PLAY_MODE;
-int lastPitch = 0;
-
-void onButtonUp() {
+void onTogglePlayRec() {
   mode = !mode;
+  seqPos = 0;
+  shutUp();
+
   if (mode == PLAY_MODE) {
     Serial.println("PLAY");
   } else {
@@ -62,37 +77,66 @@ void onButtonUp() {
   }
 }
 
-void onTrig() {
+void playBtn(int btn) {
     // set the note based on A1
-    delay(30);
-    int pitch = analogRead(pitchPin);
-    lastPitch = map(pitch, 0, 1023, 0, 4095);
-    Serial.print("Pitch: ");
-    Serial.print(pitch);
+    static const uint16_t pitches[seqBtnCount] = { 512, 1024, 2048, 3072 };
+    Serial.print("< ");
+    Serial.print(btn);
     Serial.print(": ");
-    Serial.println(lastPitch);
-    dac.setVoltage(lastPitch, false);
+    Serial.println(pitches[btn]);
+    dac.setVoltage(pitches[btn], false);
 }
 
-void checkButton() {
-    static int buttonState = 0;
-    static int buttonLastState = 0;
+void shutUp() {
+    dac.setVoltage(0, false);
+}
+
+void checkPlayButton() {
+    static int playState = 0;
+    static int lastPlayState = 0;
 
     // read the state of the pushbutton value:
-    buttonState = digitalRead(buttonPin);
-  
-    // check if the pushbutton is pressed. If it is, the buttonState is HIGH:
-    if (buttonState == HIGH) {
-      // turn LED on:
-      digitalWrite(ledPin, HIGH);
-    } else {
-      // turn LED off:
-      digitalWrite(ledPin, LOW);
-      if (buttonLastState != buttonState) {
-        onButtonUp();
+    playState = digitalRead(playPin);
+    if (lastPlayState != playState) {
+      digitalWrite(ledPin, !playState);
+      if (playState == LOW) {
+        onTogglePlayRec();
       }
     }
-    buttonLastState = buttonState;
+    lastPlayState = playState;
+}
+
+void nextStep() {
+  seqPos = (seqPos + 1) % seqLen;
+  Serial.println(seqPos);
+}
+
+// REC mode
+void checkSeqButton(int i) {
+  static int buttonStates[seqBtnCount] = { HIGH, HIGH, HIGH, HIGH };
+  static int buttonLastStates[seqBtnCount] = { HIGH, HIGH, HIGH, HIGH };
+
+  buttonStates[i] = digitalRead(seqPin[i]);
+  if (buttonStates[i] == LOW) {
+    playBtn(i);
+    if (buttonLastStates[i] == HIGH) {
+      sequence[seqPos] = i;
+      nextStep();
+    }
+  } else {
+    shutUp();
+  }
+  buttonLastStates[i] = buttonStates[i];
+}
+
+void playSequenceStep(int step) {
+  const bool isRest = sequence[step] == -1;
+  digitalWrite(LED_BUILTIN, isRest ? LOW : HIGH);
+  if (isRest) {
+    shutUp();
+  } else {
+    playBtn(sequence[step]);
+  }
 }
 
 void loop(void) {
@@ -101,22 +145,31 @@ void loop(void) {
     static bool on = false;
     static int lastRead = 0;
 
-    checkButton();
-    
-    // look for triggers and reset to near the peak of the sine wave
-    if (nowMs - lastTriggerMs > 150) {
-      // read the trigger on analog pin 0:
-      int sensorValue = analogRead(trigPin );
-      // The analog reading goes from 0 - 1023
-      if (sensorValue == 1023 && lastRead != sensorValue) {
-        onTrig();
-        lastTriggerMs = nowMs;
+    checkPlayButton();
 
-        // toggle the LED each retrig
-        digitalWrite(LED_BUILTIN, on ? LOW : HIGH);
-        on = !on;
+    if (mode == REC_MODE) {
+      for (int i = 0; i < seqBtnCount; i++) {
+        checkSeqButton(i);
       }
-      lastRead = sensorValue;
-    }
+    } else {
+      playSequenceStep(seqPos);
 
+      // look for triggers and advance sequence when found
+      if (nowMs - lastTriggerMs > 150) {
+        // read the trigger on analog pin 0:
+        int sensorValue = analogRead(trigPin);
+        Serial.print("> ");
+        Serial.println(sensorValue);
+        // The analog reading goes from 0 - 1023
+        if (sensorValue == 1023 && lastRead != sensorValue) {
+          nextStep();
+          lastTriggerMs = nowMs;
+
+          // toggle the LED each retrig
+          digitalWrite(LED_BUILTIN, on ? LOW : HIGH);
+          on = !on;
+        }
+        lastRead = sensorValue;
+      }
+    }
 }
