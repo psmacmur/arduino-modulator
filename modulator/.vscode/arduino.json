@@ -1,0 +1,6 @@
+{
+    "board": "arduino:avr:leonardo",
+    "programmer": "arduino:avrisp",
+    "port": "COM8",
+    "sketch": "..\\sequencer\\sequencer.ino"
+}
