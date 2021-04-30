@@ -7,8 +7,11 @@
             "compilerArgs": [],
             "intelliSenseMode": "msvc-x64",
             "includePath": [
-                "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\**",
                 "${workspaceFolder}/**",
+                "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\**",
+                "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\InputDebounce\\src",
+                "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\Adafruit_MCP4725",
+                "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\EEPROMEx",
                 "C:\\Program Files (x86)\\Arduino\\tools\\**",
                 "C:\\Program Files (x86)\\Arduino\\hardware\\arduino\\avr\\**",
                 "C:\\Program Files (x86)\\Arduino\\hardware\\tools\\avr\\avr\\include",
@@ -49,6 +52,7 @@
                 "C:\\Program Files (x86)\\Arduino\\hardware\\arduino\\avr\\libraries\\Wire\\src",
                 "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\Adafruit_MCP4725",
                 "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\InputDebounce\\src",
+                "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\EEPROMEx",
                 "c:\\program files (x86)\\arduino\\hardware\\tools\\avr\\lib\\gcc\\avr\\7.3.0\\include",
                 "c:\\program files (x86)\\arduino\\hardware\\tools\\avr\\lib\\gcc\\avr\\7.3.0\\include-fixed",
                 "c:\\program files (x86)\\arduino\\hardware\\tools\\avr\\avr\\include"

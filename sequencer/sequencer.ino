@@ -21,6 +21,8 @@
 #include <Wire.h>
 #include <Adafruit_MCP4725.h>
 #include <InputDebounce.h>
+#include <EEPROMex.h>
+#include <EEPROMVar.h>
 
 Adafruit_MCP4725 dac;
 
@@ -34,20 +36,40 @@ const int trigPin = A0;
 const int PLAY_MODE = 0;
 const int REC_MODE = 1;
 const int seqLen = 16; // 16 step sequencer
+const int DEBOUNCE_DELAY = 50;
+const int DEFAULT_DURATION = 250;
+
+static InputDebounce buttons[seqBtnCount + ctrlBtnCount];
+
 int mode = PLAY_MODE;
 int lastPitch = 0;
 int sequence[seqLen] = { 
-  0, 1, 2, 3,
-  -1, -1, -1, -1,
-  -1, -1, -1, -1,
-  -1, -1, -1, -1
+  int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)),
+  int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)),
+  int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)),
+  int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount))
+};
+int durations[seqLen] = {
+  int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)),
+  int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)),
+  int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)),
+  int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION))
 };
 int seqPos = 0;
-static InputDebounce buttons[seqBtnCount + ctrlBtnCount];
+unsigned long seqNoteOff = 0;
 
+void readEEPROM() {
+  EEPROM.readBlock<int>(0, sequence, seqLen);
+  EEPROM.readBlock<int>(sizeof(sequence), durations, seqLen);
+}
 
-void playBtn(int btn) {
-    // set the note based on A1
+void updateEEPROM() {
+  EEPROM.updateBlock<int>(0, sequence, seqLen);
+  EEPROM.updateBlock<int>(sizeof(sequence), durations, seqLen);
+}
+
+// output the note for the given sequence button index
+void writeBtnPitch(int btn) {
     static const uint16_t pitches[seqBtnCount] = { 512, 1024, 2048, 3072 };
     // Serial.print("< ");
     // Serial.print(btn);
@@ -56,6 +78,7 @@ void playBtn(int btn) {
     dac.setVoltage(pitches[btn], false);
 }
 
+// turn off any currently-playing note
 void shutUp() {
     dac.setVoltage(0, false);
 }
@@ -64,27 +87,30 @@ void seqBtn_pressedCallback(uint8_t pinIn)
 {
   // handle pressed state
   digitalWrite(ledPin, HIGH); // turn the LED on
-  Serial.print("SEQ HIGH (pin: ");
-  Serial.print(pinIn);
-  Serial.println(")");
-  playBtn(pinBtn[pinIn] - ctrlBtnCount);
+  // Serial.print("SEQ HIGH (pin: ");
+  // Serial.print(pinIn);
+  // Serial.println(")");
+  writeBtnPitch(pinBtn[pinIn] - ctrlBtnCount);
 }
 
+// increment through the sequence, looping to the front if at the end
 void nextStep() {
   seqPos = (seqPos + 1) % seqLen;
-  Serial.println(seqPos);
+  // Serial.println(seqPos);
 }
 
 void seqBtn_releasedCallback(uint8_t pinIn)
 {
   // handle released state
-  digitalWrite(ledPin, LOW); // turn the LED off
-  Serial.print("SEQ LOW (pin: ");
-  Serial.print(pinIn);
-  Serial.println(")");
-  sequence[seqPos] = pinBtn[pinIn] - ctrlBtnCount;
-  nextStep();
-  shutUp();
+  // Serial.print("SEQ LOW (pin: ");
+  // Serial.print(pinIn);
+  // Serial.println(")");
+  if (mode == REC_MODE) {
+    digitalWrite(ledPin, LOW); // turn the LED off
+    sequence[seqPos] = pinBtn[pinIn] - ctrlBtnCount;
+    nextStep();
+    shutUp();
+  }
 }
 
 void seqBtn_pressedDurationCallback(uint8_t pinIn, unsigned long duration)
@@ -95,7 +121,7 @@ void seqBtn_pressedDurationCallback(uint8_t pinIn, unsigned long duration)
   // Serial.print(") still pressed, duration ");
   // Serial.print(duration);
   // Serial.println("ms");
-  playBtn(pinBtn[pinIn] - ctrlBtnCount);
+  writeBtnPitch(pinBtn[pinIn] - ctrlBtnCount);
 }
 
 void seqBtn_releasedDurationCallback(uint8_t pinIn, unsigned long duration)
@@ -106,6 +132,9 @@ void seqBtn_releasedDurationCallback(uint8_t pinIn, unsigned long duration)
   // Serial.print("), duration ");
   // Serial.print(duration);
   // Serial.println("ms");
+  if (mode == REC_MODE) {
+    durations[seqPos] = duration;
+  }
 }
 
 void onTogglePlayRec() {
@@ -114,11 +143,12 @@ void onTogglePlayRec() {
   shutUp();
 
   if (mode == PLAY_MODE) {
+    Serial.println("PLAY; Saving ");
     for (int i = 0; i < seqLen; i++) {
       Serial.print(sequence[i]);
       Serial.print(", ");
     }
-    Serial.println("PLAY");
+    updateEEPROM();
   } else {
     Serial.println("REC");
   }
@@ -165,54 +195,41 @@ void playBtn_releasedDurationCallback(uint8_t pinIn, unsigned long duration)
 
 void setup(void) {
   Serial.begin(9600);
-  Serial.println("Sequencer init");
+  Serial.println("Sequencer init...");
   
   // initialize digital pin LED_BUILTIN as an output.
-  pinMode(LED_BUILTIN, OUTPUT);
-  // pinMode(playPin, INPUT_PULLUP);
+  pinMode(ledPin, OUTPUT);
+
   buttons[0].registerCallbacks(playBtn_pressedCallback, playBtn_releasedCallback, playBtn_pressedDurationCallback, playBtn_releasedDurationCallback);
-  buttons[0].setup(playPin, DEFAULT_INPUT_DEBOUNCE_DELAY, InputDebounce::PIM_INT_PULL_UP_RES, 300); // single-shot pressed-on time duration callback
+  buttons[0].setup(playPin, DEBOUNCE_DELAY, InputDebounce::PIM_INT_PULL_UP_RES, 300); // single-shot pressed-on time duration callback
 
   for (int i = 0; i < seqBtnCount; i++) {
-    // pinMode(seqPin[i], INPUT_PULLUP);
     // register callback functions (shared, used by all buttons)
     int btnIdx = i + ctrlBtnCount;
     buttons[btnIdx].registerCallbacks(seqBtn_pressedCallback, seqBtn_releasedCallback, seqBtn_pressedDurationCallback, seqBtn_releasedDurationCallback);
     
     // setup input buttons (debounced)
-    buttons[btnIdx].setup(seqPin[i], DEFAULT_INPUT_DEBOUNCE_DELAY, InputDebounce::PIM_INT_PULL_UP_RES); 
+    buttons[btnIdx].setup(seqPin[i], DEBOUNCE_DELAY, InputDebounce::PIM_INT_PULL_UP_RES); 
   }
   
+  Serial.println("Reading EEPROM...");
+  readEEPROM();
+
   // For Adafruit MCP4725A1 the address is 0x62 (default) or 0x63 (ADDR pin tied to VCC)
   // For MCP4725A0 the address is 0x60 or 0x61
   // For MCP4725A2 the address is 0x64 or 0x65
-  dac.begin(0x60);
-}
+  dac.begin(0x60); // I solder the 2 pins on the GND end together, setting it to 0x60
+  shutUp();
 
-// int lerp(uint16_t a, uint16_t b, uint16_t i, uint16_t steps) {
-//   float t = float(i) / float(steps);
-//   float delta = float(b) - float(a);
-//   uint16_t result = round(a + t * delta);
-//   return result;
-// }
-
-
-void checkPlayButton(unsigned long now) {
-    buttons[0].process(now);
-}
-
-// REC mode
-void checkSeqButton(int i, unsigned long now) {
-  buttons[i].process(now);
+  Serial.println("Let's bleep!");
 }
 
 void playSequenceStep(int step) {
   const bool isRest = sequence[step] == -1;
-  digitalWrite(LED_BUILTIN, isRest ? LOW : HIGH);
   if (isRest) {
     shutUp();
   } else {
-    playBtn(sequence[step]);
+    writeBtnPitch(sequence[step]);
   }
 }
 
@@ -222,17 +239,21 @@ void loop(void) {
     static bool on = false;
     static int lastRead = 0;
 
-    checkPlayButton(now);
+    for (int i = 0, len = seqBtnCount + ctrlBtnCount; i < len; i++) {
+      buttons[i].process(now);
+    }
 
-    if (mode == REC_MODE) {
-      for (int i = 0; i < seqBtnCount; i++) {
-        checkSeqButton(i + ctrlBtnCount, now);
+    if (mode == PLAY_MODE) {
+      if (now <= seqNoteOff) {
+        playSequenceStep(seqPos);
+      } else {
+        shutUp();
+        digitalWrite(ledPin, LOW);
+        on = !on;
       }
-    } else {
-      playSequenceStep(seqPos);
 
       // look for triggers and advance sequence when found
-      if (now - lastTriggerMs > 150) {
+      if (now - lastTriggerMs > DEBOUNCE_DELAY) {
         // read the trigger on analog pin 0:
         int sensorValue = analogRead(trigPin);
         // Serial.print("> ");
@@ -241,13 +262,13 @@ void loop(void) {
         if (sensorValue == 1023 && lastRead != sensorValue) {
           nextStep();
           lastTriggerMs = now;
+          seqNoteOff = now + durations[seqPos];
 
           // toggle the LED each retrig
-          // digitalWrite(LED_BUILTIN, on ? LOW : HIGH);
+          digitalWrite(ledPin, on ? LOW : HIGH);
           on = !on;
         }
         lastRead = sensorValue;
       }
     }
-    delay(1);
 }
