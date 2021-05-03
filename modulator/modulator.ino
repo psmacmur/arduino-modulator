@@ -2,8 +2,9 @@
  * 
     Inputs: 
     A0: Trigger bitsnap
-    A2: interpSteps pot
-    D8: Button (TBD)
+    A1: interpSteps pot
+    D4: Button (switch trig vs free)
+    D6: Button (switch triangle vs sine)
 
     Ouputs:
     MCP4725
@@ -29,15 +30,25 @@
 /**************************************************************************/
 #include <Wire.h>
 #include <Adafruit_MCP4725.h>
+#include <InputDebounce.h>
+
+#define HAS_RATE 0 // set to 1 if a rate pot is connected
 
 Adafruit_MCP4725 dac;
 
-const int buttonPin = 8;
 const int ledPin = LED_BUILTIN;
-const int envSteps = 8;
+const int ratePin = A1;
+const int maxEnvSteps = 64;
+const int maxLfoSteps = 1024;
 const int envStartStep = 128;
 const int defaultInterpSteps = 120;
-int interpSteps = defaultInterpSteps;
+const int btnCount = 2; // env vs lfo, sine vs tri
+const int btnPin[btnCount] = { 4, 6 }; //, 8, 9 };
+const int pinBtn[6] = { 0, 0, 0, 0, 0, 1 };
+const int DEBOUNCE_DELAY = 30;
+
+static InputDebounce buttons[btnCount];
+static bool toggles[btnCount] = { false, true };
 
 /* Note: If flash space is tight a quarter sine wave is enough
    to generate full sine and cos waves, but some additional
@@ -119,22 +130,44 @@ int lerp(uint16_t a, uint16_t b, uint16_t i, uint16_t steps) {
   return result;
 }
 
-void onButtonUp() {
-  interpSteps = defaultInterpSteps;
+
+void btn_pressedCallback(uint8_t pinIn)
+{
+  // handle pressed state
+  digitalWrite(ledPin, HIGH); // turn the LED on
+  Serial.print("button HIGH (pin: ");
+  Serial.print(pinIn);
+  Serial.println(")");
 }
 
-void checkButton() {
-    static int buttonState = 0;
-    static int buttonLastState = 0;
+void btn_releasedCallback(uint8_t pinIn)
+{
+  // handle released state
+  digitalWrite(ledPin, LOW); // turn the LED off
+  Serial.print("button LOW (pin: ");
+  Serial.print(pinIn);
+  Serial.println(")");
+  toggles[pinBtn[pinIn]] = !toggles[pinBtn[pinIn]];
+}
 
-    // read the state of the pushbutton value:
-    buttonState = digitalRead(buttonPin);
-  
-    // check if the pushbutton is pressed. If it is, the buttonState is HIGH:
-    if (buttonState == HIGH && buttonLastState != buttonState) {
-        onButtonUp();
-    }
-    buttonLastState = buttonState;
+void btn_pressedDurationCallback(uint8_t pinIn, unsigned long duration)
+{
+  // handle still pressed state
+  // Serial.print("PLAY HIGH (pin: ");
+  // Serial.print(pinIn);
+  // Serial.print(") still pressed, duration ");
+  // Serial.print(duration);
+  // Serial.println("ms");
+}
+
+void btn_releasedDurationCallback(uint8_t pinIn, unsigned long duration)
+{
+  // handle released state
+  // Serial.print("PLAY LOW (pin: ");
+  // Serial.print(pinIn);
+  // Serial.print("), duration ");
+  // Serial.print(duration);
+  // Serial.println("ms");
 }
 
 void setup(void) {
@@ -143,8 +176,16 @@ void setup(void) {
   
   // initialize digital pin LED_BUILTIN as an output.
   pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(buttonPin, INPUT);
   
+  for (int i = 0; i < btnCount; i++) {
+    // register callback functions (shared, used by all buttons)
+    int btnIdx = i;
+    buttons[btnIdx].registerCallbacks(btn_pressedCallback, btn_releasedCallback, btn_pressedDurationCallback, btn_releasedDurationCallback);
+    
+    // setup input buttons (debounced)
+    buttons[btnIdx].setup(btnPin[i], DEBOUNCE_DELAY, InputDebounce::PIM_INT_PULL_UP_RES); 
+  }
+
   // For Adafruit MCP4725A1 the address is 0x62 (default) or 0x63 (ADDR pin tied to VCC)
   // For MCP4725A0 the address is 0x60 or 0x61
   // For MCP4725A2 the address is 0x64 or 0x65
@@ -157,11 +198,15 @@ void loop(void) {
     unsigned long nowMs = millis();
     static bool on = false;
     static int lastRead = 0;
+    const bool isTriggered = toggles[0];
+    const bool isSine = toggles[1];
 
-    checkButton();
+    for (int btn = 0; btn < btnCount; btn++) {
+      buttons[btn].process(nowMs);
+    }
 
     // look for triggers and reset to near the peak of the sine wave
-    if (nowMs - lastTriggerMs > 150) {
+    if (isTriggered && nowMs - lastTriggerMs > 150) {
       // read the input on analog pin 0:
       int sensorValue = analogRead(A0);
 //      Serial.print("> ");
@@ -169,34 +214,53 @@ void loop(void) {
       // The analog reading goes from 0 - 1023
       if (sensorValue == 1023 && lastRead != sensorValue) {
         step = envStartStep;
-        interpSteps = envSteps;
         lastTriggerMs = nowMs;
 
-        // toggle the LED each retrig
+        // toggle the LED ueach retrig
         digitalWrite(LED_BUILTIN, on ? LOW : HIGH);
         on = !on;
       }
       lastRead = sensorValue;
     }
 
-    // set the LFO interpSteps based on A2
-//    int sensorValue = analogRead(A2);
-//    Serial.print("< ");
-//    Serial.println(sensorValue);
-//    steps = sensorValue;
-    
+    int rate = defaultInterpSteps;
+    #if HAS_RATE
+      // set the LFO interpSteps based on the rate pot
+      rate = analogRead(ratePin);
+      Serial.print("Rate <- ");
+      Serial.println(rate);
+    #endif
+    int interpSteps = map(rate, 0, 1023, 0, isTriggered ? maxEnvSteps : maxLfoSteps);
+      
+    uint16_t i = 0;
+    if (isSine) {
 
+      
       // Smooth it out with linear interpolation between samples
-      uint16_t i;
       const uint16_t nextStep = (step + 1) % 512;
       const uint16_t a = pgm_read_word(&DACLookup_FullSine_9Bit[step]);
       const uint16_t b = pgm_read_word(&DACLookup_FullSine_9Bit[nextStep]);
       uint16_t t;
-      for (i = 0; i < interpSteps; i++)
-      {
+      for (i = 0; i < interpSteps; i++) {
         t = lerp(a, b, i, interpSteps);
-//        Serial.println(t);
+  //        Serial.println(t);
         dac.setVoltage(t, false);
       }
       step = nextStep;
+    } else {
+        // Adafruit triangle example
+        // Run through the full 12-bit scale for a triangle wave
+        if (!isTriggered && step < 4095) {
+          for (i = 0; step < 4095 && i < interpSteps; i++, step++)
+          {
+            dac.setVoltage(step, false);
+          }
+        }
+        if (step >= 4095) {
+          for (; i < interpSteps && step > 0; i++, step--)
+          {
+            dac.setVoltage(step, false);
+          }
+        }
+    }
 }

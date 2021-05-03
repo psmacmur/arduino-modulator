@@ -36,7 +36,7 @@ const int trigPin = A0;
 const int PLAY_MODE = 0;
 const int REC_MODE = 1;
 const int seqLen = 16; // 16 step sequencer
-const int DEBOUNCE_DELAY = 50;
+const int DEBOUNCE_DELAY = 150;
 const int DEFAULT_DURATION = 250;
 
 static InputDebounce buttons[seqBtnCount + ctrlBtnCount];
@@ -253,7 +253,7 @@ void loop(void) {
       }
 
       // look for triggers and advance sequence when found
-      if (now - lastTriggerMs > DEBOUNCE_DELAY) {
+      if (now - lastTriggerMs > DEBOUNCE_DELAY && now > seqNoteOff) {
         // read the trigger on analog pin 0:
         int sensorValue = analogRead(trigPin);
         // Serial.print("> ");
