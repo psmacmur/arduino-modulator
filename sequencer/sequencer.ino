@@ -32,7 +32,7 @@ const int ctrlBtnCount = 1; // Just the play/rec button for now
 const int seqPin[seqBtnCount] = { 4, 6, 8, 9 };
 const int pinBtn[16] = { 0, 0, 0, 0, 1, 0, 2, 0, 3, 4, 0, 0, 0, 0, 0, 0 }; // map pins to buttons
 const int ledPin = LED_BUILTIN;
-const int trigPin = A0;
+const int trigPin = A1;
 const int PLAY_MODE = 0;
 const int REC_MODE = 1;
 const int seqLen = 16; // 16 step sequencer
@@ -148,7 +148,7 @@ void onTogglePlayRec() {
       Serial.print(sequence[i]);
       Serial.print(", ");
     }
-    updateEEPROM();
+//    updateEEPROM();
   } else {
     Serial.println("REC");
   }
