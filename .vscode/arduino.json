@@ -1,7 +1,8 @@
 {
     "programmer": "AVR ISP",
-    "board": "arduino:avr:leonardo",
+    "board": "arduino:avr:nano",
     "output": "../build",
     "port": "COM12",
-    "sketch": "sequencer\\sequencer.ino"
+    "sketch": "sequencer\\sequencer.ino",
+    "configuration": "cpu=atmega328"
 }

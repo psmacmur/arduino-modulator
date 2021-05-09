@@ -48,9 +48,7 @@
 #include <Smooth.h>
 //#include <AutoMap.h> // maps unpredictable inputs to a range
 #include <ADSR.h>
-#include <InputDebounce.h>
-#include <EEPROMex.h>
-#include <EEPROMVar.h>
+#include <mozzi_rand.h>
 
 // Mozzi includes utility code for non-blocking TWI/I2C but it appears
 // primarily for talking to I2C sensors at the CONTROL_RATE.
@@ -73,7 +71,7 @@
 //#define AD_A_PIN 4  // ADSR Attack
 //#define AD_D_PIN 5  // ADSR Delayhttps://github.com/sensorium/Mozzi.git
 #define TEST_NOTE 50 // Comment out to test without MIDI
-#define DEBUG     1  // Comment out to remove debugging info - can only be used with TEST_NOTE
+//#define DEBUG     1  // Comment out to remove debugging info - can only be used with TEST_NOTE
                        // Note: This will probably cause "clipping" of the audio...
 
 #ifndef TEST_NOTE
@@ -85,7 +83,7 @@ MIDI_CREATE_CUSTOM_INSTANCE(HardwareSerial, Serial, MIDI, MySettings);
 #endif
 
 #define CONTROL_RATE 256 // Hz, powers of 2 are most reliable
-
+#define MIN_TRIG 1010
 #define DEBOUNCE_DELAY 250 // ms
 
 // The original example used AutoMap to calibrate the range of values
@@ -131,196 +129,47 @@ ADSR <CONTROL_RATE, AUDIO_RATE> envelope;
 
 #define LED LED_BUILTIN // shows if MIDI is being recieved
 
-const int playPin = 10;
-const int seqBtnCount = 4;
-const int ctrlBtnCount = 1; // Just the play/rec button for now
-const int seqPin[seqBtnCount] = { 4, 6, 8, 9 };
-const int pinBtn[16] = { 0, 0, 0, 0, 1, 0, 2, 0, 3, 4, 0, 0, 0, 0, 0, 0 }; // map pins to buttons
-const int ledPin = LED_BUILTIN;
-const int trigPin = A1;
-const int PLAY_MODE = 0;
-const int REC_MODE = 1;
 const int seqLen = 16; // 16 step sequencer
 const int DEFAULT_DURATION = 250;
 
-static InputDebounce buttons[seqBtnCount + ctrlBtnCount];
-
-int mode = PLAY_MODE;
-int lastPitch = 0;
-int sequence[seqLen] = { 
-  int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)),
-  int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)),
-  int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)),
-  int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount)), int(random(seqBtnCount))
+uint8_t lastPitch = 0;
+uint8_t sequence[seqLen] = { 
+  60, 63, 67, 70,
+  72, 70, randMidiNote(), randMidiNote(),
+  randMidiNote(), randMidiNote(), 70, 72,
+  67, 120, 123, 127
 };
 int durations[seqLen] = {
-  int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)),
-  int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)),
-  int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)),
-  int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION)), int(random(DEFAULT_DURATION))
+  DEFAULT_DURATION, DEFAULT_DURATION, DEFAULT_DURATION, DEFAULT_DURATION,
+  DEFAULT_DURATION, DEFAULT_DURATION, DEFAULT_DURATION, DEFAULT_DURATION,
+  DEFAULT_DURATION, DEFAULT_DURATION, DEFAULT_DURATION, DEFAULT_DURATION,
+  DEFAULT_DURATION, DEFAULT_DURATION, DEFAULT_DURATION, DEFAULT_DURATION
 };
 int seqPos = 0;
 unsigned long seqNoteOff = 0;
 
-void readEEPROM() {
-  EEPROM.readBlock<int>(0, sequence, seqLen);
-  EEPROM.readBlock<int>(sizeof(sequence), durations, seqLen);
-}
-
-void updateEEPROM() {
-  EEPROM.updateBlock<int>(0, sequence, seqLen);
-  EEPROM.updateBlock<int>(sizeof(sequence), durations, seqLen);
-}
-
 // output the note for the given sequence button index
-void writeBtnPitch(int btn) {
-    static const uint16_t pitches[seqBtnCount] = { 60, 63, 67, 70 };
+void writeBtnPitch(uint8_t note) {
 #ifdef DEBUG
     // Serial.print("< ");
     // Serial.print(btn);
     // Serial.print(": ");
-    Serial.println(pitches[btn]);
+//    Serial.println(note);
 #endif
-    lastPitch = pitches[btn];
+    lastPitch = note;
     HandleNoteOn (1, lastPitch, 127);
 }
 
 // turn off any currently-playing note
 void shutUp() {
     HandleNoteOff(1, lastPitch, 0);
-    lastPitch = 0;
-}
-
-void seqBtn_pressedCallback(uint8_t pinIn)
-{
-  // handle pressed state
-  digitalWrite(ledPin, HIGH); // turn the LED on
-#ifdef DEBUG
-  Serial.print("SEQ HIGH (pin: ");
-  Serial.print(pinIn);
-  Serial.println(")");
-#endif
-  writeBtnPitch(pinBtn[pinIn] - ctrlBtnCount);
+    lastPitch = 0; 
 }
 
 // increment through the sequence, looping to the front if at the end
 void nextStep() {
   seqPos = (seqPos + 1) % seqLen;
   // Serial.println(seqPos);
-}
-
-void seqBtn_releasedCallback(uint8_t pinIn)
-{
-  // handle released state
-#ifdef DEBUG
-   Serial.print("SEQ LOW (pin: ");
-   Serial.print(pinIn);
-   Serial.println(")");
-#endif
-  if (mode == REC_MODE) {
-    digitalWrite(ledPin, LOW); // turn the LED off
-    sequence[seqPos] = pinBtn[pinIn] - ctrlBtnCount;
-    nextStep();
-    shutUp();
-  }
-}
-
-void seqBtn_pressedDurationCallback(uint8_t pinIn, unsigned long duration)
-{
-  // handle still pressed state
-#ifdef DEBUG
-  // Serial.print("SEQ HIGH (pin: ");
-  // Serial.print(pinIn);
-  // Serial.print(") still pressed, duration ");
-  // Serial.print(duration);
-  // Serial.println("ms");
-#endif
-  writeBtnPitch(pinBtn[pinIn] - ctrlBtnCount);
-}
-
-void seqBtn_releasedDurationCallback(uint8_t pinIn, unsigned long duration)
-{
-  // handle released state
-#ifdef DEBUG
-   Serial.print("SEQ LOW (pin: ");
-   Serial.print(pinIn);
-   Serial.print("), duration ");
-   Serial.print(duration);
-   Serial.println("ms");
-#endif
-  if (mode == REC_MODE) {
-    durations[seqPos] = duration;
-  }
-}
-
-void onTogglePlayRec() {
-  mode = !mode;
-  seqPos = 0;
-  shutUp();
-
-  if (mode == PLAY_MODE) {
-#ifdef DEBUG
-    Serial.println("PLAY; Saving ");
-#endif
-    for (int i = 0; i < seqLen; i++) {
-#ifdef DEBUG
-      Serial.print(sequence[i]);
-      Serial.print(", ");
-#endif
-    }
-    updateEEPROM();
-  } else {
-#ifdef DEBUG
-    Serial.println("REC");
-#endif
-  }
-}
-
-void playBtn_pressedCallback(uint8_t pinIn)
-{
-  // handle pressed state
-  digitalWrite(ledPin, HIGH); // turn the LED on
-#ifdef DEBUG
-  Serial.print("PLAY HIGH (pin: ");
-  Serial.print(pinIn);
-  Serial.println(")");
-#endif
-}
-
-void playBtn_releasedCallback(uint8_t pinIn)
-{
-  // handle released state
-  digitalWrite(ledPin, LOW); // turn the LED off
-#ifdef DEBUG
-  Serial.print("PLAY LOW (pin: ");
-  Serial.print(pinIn);
-  Serial.println(")");
-#endif
-  onTogglePlayRec();
-}
-
-void playBtn_pressedDurationCallback(uint8_t pinIn, unsigned long duration)
-{
-  // handle still pressed state
-#ifdef DEBUG
-  // Serial.print("PLAY HIGH (pin: ");
-  // Serial.print(pinIn);
-  // Serial.print(") still pressed, duration ");
-  // Serial.print(duration);
-  // Serial.println("ms");
-#endif
-}
-
-void playBtn_releasedDurationCallback(uint8_t pinIn, unsigned long duration)
-{
-  // handle released state
-#ifdef DEBUG
-  // Serial.print("PLAY LOW (pin: ");
-  // Serial.print(pinIn);
-  // Serial.print("), duration ");
-  // Serial.print(duration);
-  // Serial.println("ms");
-#endif
 }
 
 void dacSetup (){
@@ -412,23 +261,6 @@ void setup(){
   MIDI.setHandleNoteOff(HandleNoteOff);  // Put only the name of the function
   MIDI.begin(MIDI_CHANNEL);
 #endif
-  
-  buttons[0].registerCallbacks(playBtn_pressedCallback, playBtn_releasedCallback, playBtn_pressedDurationCallback, playBtn_releasedDurationCallback);
-  buttons[0].setup(playPin, DEBOUNCE_DELAY, InputDebounce::PIM_INT_PULL_UP_RES, 300); // single-shot pressed-on time duration callback
-
-  for (int i = 0; i < seqBtnCount; i++) {
-    // register callback functions (shared, used by all buttons)
-    int btnIdx = i + ctrlBtnCount;
-    buttons[btnIdx].registerCallbacks(seqBtn_pressedCallback, seqBtn_releasedCallback, seqBtn_pressedDurationCallback, seqBtn_releasedDurationCallback);
-    
-    // setup input buttons (debounced)
-    buttons[btnIdx].setup(seqPin[i], DEBOUNCE_DELAY, InputDebounce::PIM_INT_PULL_UP_RES); 
-  }
-  
-#ifdef DEBUG
-  Serial.println("Reading EEPROM...");
-#endif
-  readEEPROM();
 
   adsr_a = 0;
   adsr_d = 50;
@@ -485,7 +317,7 @@ void updateControl(){
 #endif
     static unsigned long lastTriggerMs = 0;
     static int lastRead = 0;
-    static const int trigPin = A0;
+    static const int trigPin = A1;
     unsigned long now = millis();
 
   // Read the potentiometers - do one on each updateControl scan.
@@ -575,35 +407,29 @@ void updateControl(){
 //  Serial.print(lastL); Serial.print("\n");
 #endif
 
-  for (int i = 0, len = seqBtnCount + ctrlBtnCount; i < len; i++) {
-    buttons[i].process(now);
-  }
-
-  if (mode == PLAY_MODE) {
-    if (now <= seqNoteOff) {
-      playSequenceStep(seqPos);
-    } else {
-      shutUp();
-    }
-  }
-
-  // look for triggers and advance sequence when found
-  if (now - lastTriggerMs > DEBOUNCE_DELAY) {
-    // read the trigger on analog pin 0:
-    int sensorValue = mozziAnalogRead(trigPin);
+    // look for triggers and advance sequence when found
+    if (now - lastTriggerMs > DEBOUNCE_DELAY) {
+        // read the trigger on analog pin 0:
+        int sensorValue = mozziAnalogRead(trigPin);
 #ifdef DEBUG
-    // Serial.print("> ");
-    // Serial.println(sensorValue);
-    // The analog reading goes from 0 - 1023
+//        Serial.print("> ");
+//        Serial.println(sensorValue);
+        // The analog reading goes from 0 - 1023
 #endif
-    if (sensorValue == 1023 && lastRead != sensorValue) {
-      // nextStep();
-      HandleNoteOn (1, random(127), 127);
-      lastTriggerMs = now;
-      // seqNoteOff = now + durations[seqPos];
+        if (sensorValue >= MIN_TRIG && lastRead != sensorValue) {
+            HandleNoteOn (1, sequence[seqPos], 127);
+            lastTriggerMs = now;
+            seqNoteOff = now + durations[seqPos];
+            nextStep();
+        }
+        lastRead = sensorValue;
     }
-    lastRead = sensorValue;
-  }
+
+//    if (now <= seqNoteOff) {
+//        playSequenceStep(seqPos);
+//    } else {
+//        shutUp();
+//    }
 
   // testcount++;
   // if (testcount == 100) {
@@ -617,11 +443,6 @@ void updateControl(){
 
 
 int updateAudio(){
-  if (lastPitch == 0) {
-    dacWrite(0);
-    return;
-  }
-  
   long modulation = aSmoothIntensity.next(fm_intensity) * aModulator.next();
 //  return (int)((envelope.next() * aCarrier.phMod(modulation)) >> 8);
 
@@ -636,12 +457,19 @@ int updateAudio(){
   // Also need to bias the signal so that it will go from 0 to 2048 rather
   // then +/-1024.
   //
-  int dac = ((int)(envelope.next() * aCarrier.phMod(modulation)) >> 5);
-  dacWrite(1024+dac);
+  int mozziVal = (int)(envelope.next() * aCarrier.phMod(modulation));
+  
+#ifdef DEBUG
+  Serial.print(">> \t");
+  Serial.print(mozziVal);
+#endif
+
+  uint16_t dac = map(mozziVal, -32768, 32768, 0, 4096); // mozziVal >> 5;
+  dacWrite(dac);
 #ifdef DEBUG
   lastL = dac;
-//  Serial.print("dacWrote\t");
-//  Serial.println(1024+dac);
+  Serial.print("\t>>\t");
+  Serial.println(dac);
 #endif
   return 0;
 }
