@@ -1,8 +1,8 @@
 /*!
  * 
     Inputs: 
-    A0: Trigger bitsnap
-    A1: interpSteps pot
+    A0: interpSteps pot
+    A1: Trigger bitsnap
     D4: Button (switch trig vs free)
     D6: Button (switch triangle vs sine)
 
@@ -31,24 +31,29 @@
 #include <Wire.h>
 #include <Adafruit_MCP4725.h>
 #include <InputDebounce.h>
+#include <EEPROMex.h>
+#include <EEPROMVar.h>
 
 #define HAS_RATE 0 // set to 1 if a rate pot is connected
 
 Adafruit_MCP4725 dac;
 
 const int ledPin = LED_BUILTIN;
-const int ratePin = A1;
-const int maxEnvSteps = 64;
+const int ratePin = A0;
+const int trigPin = A1;
+const int maxEnvSteps = 4;
 const int maxLfoSteps = 1024;
-const int envStartStep = 128;
+const int envStartStep = 131;
 const int defaultInterpSteps = 120;
 const int btnCount = 2; // env vs lfo, sine vs tri
 const int btnPin[btnCount] = { 4, 6 }; //, 8, 9 };
-const int pinBtn[6] = { 0, 0, 0, 0, 0, 1 };
+const int pinBtn[7] = { 0, 0, 0, 0, 0, 1, 1 };
 const int DEBOUNCE_DELAY = 30;
+const int MIN_TRIG = 1010; // least ammount considered a trigger (is ~1019 if a pulldown is connected)
+const int MAX_TROUGH = 3; // largest amount considered a trough, indicating the trigger is off
 
 static InputDebounce buttons[btnCount];
-static bool toggles[btnCount] = { false, true };
+static bool toggles[btnCount] = { true, true };
 
 /* Note: If flash space is tight a quarter sine wave is enough
    to generate full sine and cos waves, but some additional
@@ -58,14 +63,14 @@ static bool toggles[btnCount] = { false, true };
 const PROGMEM uint16_t DACLookup_FullSine_9Bit[512] =
 {
   2048, 2073, 2098, 2123, 2148, 2174, 2199, 2224,
-  2249, 2274, 2299, 2324, 2349, 2373, 2398, 2423,
-  2448, 2472, 2497, 2521, 2546, 2570, 2594, 2618,
-  2643, 2667, 2690, 2714, 2738, 2762, 2785, 2808,
-  2832, 2855, 2878, 2901, 2924, 2946, 2969, 2991,
+  2249, 2274, 2299, 2324, 2349, 2373, 2398, 2423, // 8
+  2448, 2472, 2497, 2521, 2546, 2570, 2594, 2618, // 16
+  2643, 2667, 2690, 2714, 2738, 2762, 2785, 2808, 
+  2832, 2855, 2878, 2901, 2924, 2946, 2969, 2991, // 32
   3013, 3036, 3057, 3079, 3101, 3122, 3144, 3165,
   3186, 3207, 3227, 3248, 3268, 3288, 3308, 3328,
   3347, 3367, 3386, 3405, 3423, 3442, 3460, 3478,
-  3496, 3514, 3531, 3548, 3565, 3582, 3599, 3615,
+  3496, 3514, 3531, 3548, 3565, 3582, 3599, 3615, // 64
   3631, 3647, 3663, 3678, 3693, 3708, 3722, 3737,
   3751, 3765, 3778, 3792, 3805, 3817, 3830, 3842,
   3854, 3866, 3877, 3888, 3899, 3910, 3920, 3930,
@@ -73,7 +78,7 @@ const PROGMEM uint16_t DACLookup_FullSine_9Bit[512] =
   4008, 4015, 4022, 4028, 4035, 4041, 4046, 4052,
   4057, 4061, 4066, 4070, 4074, 4077, 4081, 4084,
   4086, 4088, 4090, 4092, 4094, 4095, 4095, 4095,
-  4095, 4095, 4095, 4095, 4094, 4092, 4090, 4088,
+  4095, 4095, 4095, 4095, 4094, 4092, 4090, 4088, // 128
   4086, 4084, 4081, 4077, 4074, 4070, 4066, 4061,
   4057, 4052, 4046, 4041, 4035, 4028, 4022, 4015,
   4008, 4000, 3993, 3985, 3976, 3968, 3959, 3950,
@@ -130,6 +135,13 @@ int lerp(uint16_t a, uint16_t b, uint16_t i, uint16_t steps) {
   return result;
 }
 
+void readEEPROM() {
+  EEPROM.readBlock<bool>(0, toggles, btnCount);
+}
+
+void updateEEPROM() {
+  EEPROM.updateBlock<bool>(0, toggles, btnCount);
+}
 
 void btn_pressedCallback(uint8_t pinIn)
 {
@@ -148,6 +160,7 @@ void btn_releasedCallback(uint8_t pinIn)
   Serial.print(pinIn);
   Serial.println(")");
   toggles[pinBtn[pinIn]] = !toggles[pinBtn[pinIn]];
+  updateEEPROM();
 }
 
 void btn_pressedDurationCallback(uint8_t pinIn, unsigned long duration)
@@ -172,8 +185,10 @@ void btn_releasedDurationCallback(uint8_t pinIn, unsigned long duration)
 
 void setup(void) {
   Serial.begin(9600);
-  Serial.println("Hello!");
-  
+  Serial.println("Modulator init!");
+
+  readEEPROM();
+
   // initialize digital pin LED_BUILTIN as an output.
   pinMode(LED_BUILTIN, OUTPUT);
   
@@ -206,36 +221,40 @@ void loop(void) {
     }
 
     // look for triggers and reset to near the peak of the sine wave
-    if (isTriggered && nowMs - lastTriggerMs > 150) {
+    if (isTriggered && nowMs - lastTriggerMs > DEBOUNCE_DELAY) {
       // read the input on analog pin 0:
-      int sensorValue = analogRead(A0);
-//      Serial.print("> ");
-//      Serial.println(sensorValue);
+      int sensorValue = analogRead(trigPin);
+//     Serial.print("trig <-  ");
+//     Serial.println(sensorValue);
       // The analog reading goes from 0 - 1023
-      if (sensorValue == 1023 && lastRead != sensorValue) {
+      if (sensorValue >= MIN_TRIG && lastRead <= MAX_TROUGH) {
         step = envStartStep;
         lastTriggerMs = nowMs;
 
         // toggle the LED ueach retrig
         digitalWrite(LED_BUILTIN, on ? LOW : HIGH);
         on = !on;
+       Serial.print("triggered; isSine: ");
+       Serial.println(isSine);
       }
       lastRead = sensorValue;
     }
 
-    int rate = defaultInterpSteps;
-    #if HAS_RATE
-      // set the LFO interpSteps based on the rate pot
-      rate = analogRead(ratePin);
-      Serial.print("Rate <- ");
-      Serial.println(rate);
-    #endif
-    int interpSteps = map(rate, 0, 1023, 0, isTriggered ? maxEnvSteps : maxLfoSteps);
-      
+    int interpSteps;
+    if (isTriggered) {
+      interpSteps = maxEnvSteps;
+    } else {
+      int rate = defaultInterpSteps;
+      #if HAS_RATE
+        // set the LFO interpSteps based on the rate pot
+        rate = analogRead(ratePin);
+        Serial.print("Rate <- ");
+        Serial.println(rate);
+      #endif
+      interpSteps = map(rate, 0, 1023, 0, isTriggered ? maxEnvSteps : maxLfoSteps);
+    }  
     uint16_t i = 0;
-    if (isSine) {
-
-      
+    if (isSine) {    
       // Smooth it out with linear interpolation between samples
       const uint16_t nextStep = (step + 1) % 512;
       const uint16_t a = pgm_read_word(&DACLookup_FullSine_9Bit[step]);
@@ -243,7 +262,7 @@ void loop(void) {
       uint16_t t;
       for (i = 0; i < interpSteps; i++) {
         t = lerp(a, b, i, interpSteps);
-  //        Serial.println(t);
+//          Serial.println(t);
         dac.setVoltage(t, false);
       }
       step = nextStep;

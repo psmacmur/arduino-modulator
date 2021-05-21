@@ -2,7 +2,7 @@
     "programmer": "AVR ISP",
     "board": "arduino:avr:nano",
     "output": "../build",
-    "port": "COM12",
+    "port": "COM6",
     "sketch": "sequencer\\sequencer.ino",
     "configuration": "cpu=atmega328"
 }
