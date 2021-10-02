@@ -11,6 +11,8 @@
                 "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\**",
                 "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\InputDebounce\\src",
                 "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\Adafruit_MCP4725",
+                "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\Adafruit_MPR121",
+                "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\Adafruit_BusIO",
                 "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\EEPROMEx",
                 "C:\\Program Files (x86)\\Arduino\\tools\\**",
                 "C:\\Program Files (x86)\\Arduino\\hardware\\arduino\\avr\\**",
@@ -49,10 +51,8 @@
             "includePath": [
                 "C:\\Program Files (x86)\\Arduino\\hardware\\arduino\\avr\\cores\\arduino",
                 "C:\\Program Files (x86)\\Arduino\\hardware\\arduino\\avr\\variants\\eightanaloginputs",
-                "C:\\Program Files (x86)\\Arduino\\hardware\\arduino\\avr\\libraries\\Wire\\src",
-                "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\Adafruit_MCP4725",
-                "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\InputDebounce\\src",
-                "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\EEPROMEx",
+                "C:\\Users\\vowld\\Documents\\Arduino\\libraries\\Mozzi",
+                "C:\\Program Files (x86)\\Arduino\\hardware\\arduino\\avr\\libraries\\SoftwareSerial\\src",
                 "c:\\program files (x86)\\arduino\\hardware\\tools\\avr\\lib\\gcc\\avr\\7.3.0\\include",
                 "c:\\program files (x86)\\arduino\\hardware\\tools\\avr\\lib\\gcc\\avr\\7.3.0\\include-fixed",
                 "c:\\program files (x86)\\arduino\\hardware\\tools\\avr\\avr\\include"

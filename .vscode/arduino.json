@@ -2,7 +2,7 @@
     "programmer": "AVR ISP",
     "board": "arduino:avr:nano",
     "output": "../build",
-    "port": "COM6",
-    "sketch": "sequencer\\sequencer.ino",
-    "configuration": "cpu=atmega328"
+    "port": "COM5",
+    "sketch": "mozzi-fm\\mozzi-fm.ino",
+    "configuration": "cpu=atmega328old"
 }

@@ -41,10 +41,11 @@ Adafruit_MCP4725 dac;
 const int ledPin = LED_BUILTIN;
 const int ratePin = A0;
 const int trigPin = A1;
-const int maxEnvSteps = 4;
-const int maxLfoSteps = 1024;
+const int defaultEnvSteps = 4;
+const int maxEnvSteps = 32;
+const int maxLfoSteps = 4095;
 const int envStartStep = 131;
-const int defaultInterpSteps = 120;
+const int defaultLFOSteps = 120;
 const int btnCount = 2; // env vs lfo, sine vs tri
 const int btnPin[btnCount] = { 4, 6 }; //, 8, 9 };
 const int pinBtn[7] = { 0, 0, 0, 0, 0, 1, 1 };
@@ -127,6 +128,18 @@ const PROGMEM uint16_t DACLookup_FullSine_9Bit[512] =
   1648, 1673, 1698, 1723, 1747, 1772, 1797, 1822,
   1847, 1872, 1897, 1922, 1948, 1973, 1998, 2023
 };
+
+int automap(int reading, int minOut, int maxOut, int defaultOut) {
+  static int minReading = 1024;
+  static int maxReading = 0;
+
+  minReading = min(minReading, reading);
+  maxReading = max(maxReading, reading);
+  if (minReading == maxReading) {
+    return defaultOut;
+  }
+  return map(reading, minReading, maxReading, minOut, maxOut);
+}
 
 int lerp(uint16_t a, uint16_t b, uint16_t i, uint16_t steps) {
   float t = float(i) / float(steps);
@@ -224,8 +237,8 @@ void loop(void) {
     if (isTriggered && nowMs - lastTriggerMs > DEBOUNCE_DELAY) {
       // read the input on analog pin 0:
       int sensorValue = analogRead(trigPin);
-//     Serial.print("trig <-  ");
-//     Serial.println(sensorValue);
+     Serial.print("trig <-  ");
+     Serial.println(sensorValue);
       // The analog reading goes from 0 - 1023
       if (sensorValue >= MIN_TRIG && lastRead <= MAX_TROUGH) {
         step = envStartStep;
@@ -240,19 +253,18 @@ void loop(void) {
       lastRead = sensorValue;
     }
 
-    int interpSteps;
-    if (isTriggered) {
-      interpSteps = maxEnvSteps;
-    } else {
-      int rate = defaultInterpSteps;
-      #if HAS_RATE
-        // set the LFO interpSteps based on the rate pot
-        rate = analogRead(ratePin);
-        Serial.print("Rate <- ");
-        Serial.println(rate);
-      #endif
-      interpSteps = map(rate, 0, 1023, 0, isTriggered ? maxEnvSteps : maxLfoSteps);
-    }  
+    int interpSteps = isTriggered ? defaultEnvSteps : defaultLFOSteps;
+    #if HAS_RATE
+      // set the LFO interpSteps based on the rate pot
+      int rate = analogRead(ratePin);
+      interpSteps = automap(rate, 1, 
+        isTriggered ? maxEnvSteps : maxLfoSteps,
+        isTriggered ? defaultEnvSteps : defaultLFOSteps);
+//      Serial.print("Rate <- ");
+//      Serial.print(rate);
+//      Serial.print(": ");
+//      Serial.println(interpSteps);
+    #endif
     uint16_t i = 0;
     if (isSine) {    
       // Smooth it out with linear interpolation between samples
@@ -262,7 +274,7 @@ void loop(void) {
       uint16_t t;
       for (i = 0; i < interpSteps; i++) {
         t = lerp(a, b, i, interpSteps);
-//          Serial.println(t);
+          Serial.println(t);
         dac.setVoltage(t, false);
       }
       step = nextStep;
