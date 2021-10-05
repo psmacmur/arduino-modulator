@@ -34,8 +34,6 @@
 #include <EEPROMex.h>
 #include <EEPROMVar.h>
 
-#define HAS_RATE 0 // set to 1 if a rate pot is connected
-
 Adafruit_MCP4725 dac;
 
 const int ledPin = LED_BUILTIN;
@@ -46,15 +44,15 @@ const int maxEnvSteps = 32;
 const int maxLfoSteps = 4095;
 const int envStartStep = 131;
 const int defaultLFOSteps = 120;
-const int btnCount = 2; // env vs lfo, sine vs tri
-const int btnPin[btnCount] = { 4, 6 }; //, 8, 9 };
-const int pinBtn[7] = { 0, 0, 0, 0, 0, 1, 1 };
+const int btnCount = 4; // env vs lfo, sine vs tri, rate (high vs low), use rate pin
+const int btnPin[btnCount] = { 4, 6, 8, 9 };
+const int pinBtn[10] = { 0, 0, 0, 0, 0, 1, 1, 1, 2, 3 };
 const int DEBOUNCE_DELAY = 30;
 const int MIN_TRIG = 1010; // least ammount considered a trigger (is ~1019 if a pulldown is connected)
 const int MAX_TROUGH = 3; // largest amount considered a trough, indicating the trigger is off
 
 static InputDebounce buttons[btnCount];
-static bool toggles[btnCount] = { true, true };
+static bool toggles[btnCount] = { true, true, true, true };
 
 /* Note: If flash space is tight a quarter sine wave is enough
    to generate full sine and cos waves, but some additional
@@ -228,6 +226,8 @@ void loop(void) {
     static int lastRead = 0;
     const bool isTriggered = toggles[0];
     const bool isSine = toggles[1];
+    const bool isLowRate = toggles[2];
+    const bool useRatePin = toggles[3];
 
     for (int btn = 0; btn < btnCount; btn++) {
       buttons[btn].process(nowMs);
@@ -254,7 +254,7 @@ void loop(void) {
     }
 
     int interpSteps = isTriggered ? defaultEnvSteps : defaultLFOSteps;
-    #if HAS_RATE
+    if (useRatePin) {
       // set the LFO interpSteps based on the rate pot
       int rate = analogRead(ratePin);
       interpSteps = automap(rate, 1, 
@@ -264,9 +264,12 @@ void loop(void) {
 //      Serial.print(rate);
 //      Serial.print(": ");
 //      Serial.println(interpSteps);
-    #endif
+    }
     uint16_t i = 0;
-    if (isSine) {    
+    if (isLowRate) {
+      interpSteps <<= 2;
+    }
+    if (isSine) {
       // Smooth it out with linear interpolation between samples
       const uint16_t nextStep = (step + 1) % 512;
       const uint16_t a = pgm_read_word(&DACLookup_FullSine_9Bit[step]);
