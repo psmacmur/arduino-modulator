@@ -46,7 +46,7 @@
 #include <tables/triangle2048_int8.h> // triangle table for oscillator
 #include <tables/square_no_alias_2048_int8.h> // square table for oscillator
 #include <mozzi_midi.h>
-#include <Smooth.h>
+//#include <Smooth.h>
 #include <ADSR.h>
 #include <mozzi_rand.h>
 
@@ -66,9 +66,9 @@
 //#define POT0   0    // Uncomment to disable the potentiometers and used fixed readings
 //#define POT1   255
 #define POT2   128
-#define POT3   255
-#define POT4   64
-#define POT5   32
+#define POT3   64
+#define POT4   32
+#define POT5   16
 
 #define WAVETABLE 2  // 0=Sine; 1=Triangle; 2=Saw; 3=Square
 
@@ -83,7 +83,7 @@
 //#define AD_A_PIN 4  // ADSR Attack
 //#define AD_D_PIN 5  // ADSR Delayhttps://github.com/sensorium/Mozzi.git
 #define TEST_NOTE 50 // Comment out to test without MIDI
-#define DEBUG     1  // Comment out to remove debugging info - can only be used with TEST_NOTE
+//#define DEBUG     1  // Comment out to remove debugging info - can only be used with TEST_NOTE
                        // Note: This will probably cause "clipping" of the audio...
 
 #ifndef TEST_NOTE
@@ -139,7 +139,7 @@ int wavetable = WAVETABLE;
 int mod_ratio;
 int carrier_freq;
 //long fm_intensity;
-int adsr_a, adsr_d;
+int adsr_a, adsr_d, adsr_r;
 int lastL;
 
 // smoothing for intensity to remove clicks on transitions
@@ -151,6 +151,10 @@ int potWAVT, potMODR, potINTS, potRATE, potAD_A, potAD_D;
 
 // envelope generator
 ADSR <CONTROL_RATE, AUDIO_RATE> envelope;
+const int ATTACK = 50;
+const int DECAY = 200;
+const int SUSTAIN = 10000;  // 10000 is so the note will sustain 10 seconds unless a noteOff comes
+const int RELEASE = 200;
 
 #define LED LED_BUILTIN // shows if MIDI is being recieved
 
@@ -291,9 +295,10 @@ void setup(){
   MIDI.begin(MIDI_CHANNEL);
 #endif
 
-  adsr_a = 0;
-  adsr_d = 150;
-  setEnvelope(500);
+  adsr_a = ATTACK;//50;
+  adsr_d = DECAY;//200;
+  adsr_r = RELEASE;
+  setEnvelope(SUSTAIN);
 
   wavetable = WAVETABLE;
   setWavetable();
@@ -314,7 +319,7 @@ void setup(){
 void setEnvelope(unsigned int sustain) {
   envelope.setADLevels(255, 64);
 //  envelope.setTimes(adsr_a, adsr_d, max(0, sustain - (200 + adsr_a + adsr_d)), 200);
-  envelope.setTimes(adsr_a, adsr_d, 10000, 200); // 10000 is so the note will sustain 10 seconds unless a noteOff comes
+  envelope.setTimes(adsr_a, adsr_d, sustain, adsr_r);
 }
 
 void setFreqs(){
@@ -447,25 +452,26 @@ void updateControl(){
       harmonics = newharms;
       setFreqs();
     }
+  } else if (potcount == 1) {
+     gain[potcount] = mozziAnalogRead(potcount) >> 2;  // Range 0 to 255
   } else {
-     gain[potcount] = 0;//mozziAnalogRead(potcount) >> 2;  // Range 0 to 255
-
+     gain[potcount] = max(0, gain[potcount - 1] - abs(gain[potcount - 1] - gain[potcount - 2]));
      // See if we have to replace any potentiometer readings with fixed values
-#ifdef POT1
-     if (potcount == 1) gain[potcount] = POT1;
-#endif
-#ifdef POT2
-     if (potcount == 2) gain[potcount] = POT2;
-#endif
-#ifdef POT3
-     if (potcount == 3) gain[potcount] = POT3;
-#endif
-#ifdef POT4
-     if (potcount == 4) gain[potcount] = POT4;
-#endif
-#ifdef POT5
-     if (potcount == 5) gain[potcount] = POT5;
-#endif
+//#ifdef POT1
+//     if (potcount == 1) gain[potcount] = POT1;
+//#endif
+//#ifdef POT2
+//     if (potcount == 2) gain[potcount] = POT2;
+//#endif
+//#ifdef POT3
+//     if (potcount == 3) gain[potcount] = POT3;
+//#endif
+//#ifdef POT4
+//     if (potcount == 4) gain[potcount] = POT4;
+//#endif
+//#ifdef POT5
+//     if (potcount == 5) gain[potcount] = POT5;
+//#endif
   }
 
   // Pre-estimate the eventual scaling factor required based on the
@@ -615,14 +621,16 @@ int updateAudio() {
   // then +/-1024.
   //
   // int mozziVal = (int)(envelope.next() * aCarrier.phMod(modulation));
-  int mozziVal = (int)(((long)envelope.next() * nextwave));
+  int mozziVal = (int)(envelope.next() * nextwave);
 #ifdef DEBUG
+//  static int maxMozziVal = 0;
+//  maxMozziVal = max(maxMozziVal, mozziVal);
 //  Serial.print(">> \t");
-//  Serial.print(mozziVal);
+//  Serial.print(maxMozziVal);
 #endif
 
   uint16_t dac = map(mozziVal, -32768, 32768, 0, 4096); // mozziVal >> 5;
-  dacWrite(dac);
+  dacWrite(max(0, min(4096, dac)));
 #ifdef DEBUG
   lastL = dac;
 //  Serial.print("\t>>\t");
