@@ -49,7 +49,9 @@
 //#include <Smooth.h>
 #include <ADSR.h>
 #include <mozzi_rand.h>
-
+#include <InputDebounce.h>
+#include <EEPROMex.h>
+#include <EEPROMVar.h>
 //Receiver code
 #include <SoftwareSerial.h>
 
@@ -96,7 +98,7 @@ MIDI_CREATE_CUSTOM_INSTANCE(HardwareSerial, Serial, MIDI, MySettings);
 
 #define CONTROL_RATE 256 // Hz, powers of 2 are most reliable
 #define MIN_TRIG 1010
-#define DEBOUNCE_DELAY 500 // ms
+#define DEBOUNCE_DELAY 150 // ms
 
 #ifndef _BV
 #define _BV(bit) (1 << (bit)) 
@@ -127,9 +129,10 @@ int waves[NUMWAVES][HARMONICS] = {
 
 // Optional offset for each harmonic compared to carrier freq.
 // Set to zero for "pure" harmonics.
-int detune[HARMONICS] = { 1,2,3,4,5 };
+const int DETUNES = 4;
+int detune[DETUNES][HARMONICS] = {{ 0,0,0,0,0 }, { 1,1,1,1,1 }, { 1,2,3,4,5 }};
 
-int harmonics;
+int harmonics; // currently active harmonics (vs the define, which is the number available)
 long nextwave;
 long lastwave;
  
@@ -168,6 +171,25 @@ uint8_t sequence[nPads] = {
   79, 82, 84, 87
 };
 uint8_t lastPitch = 0;
+
+// Buttons & memory
+const int WAV_BTN = 0;
+const int UNISON_BTN = 1;
+const int DETUNE_BTN = 2;
+const int btnCount = 3; // Cycle waveform, harmonics vs unison, detune
+const int pinBtn[16] = { 0, 0, 0, 0, 0, 0, 1, 0, 2, 0, 0, 0, 0, 0, 0, 0 }; // map pins to buttons
+const int btnPin[btnCount] = { 4, 6, 8 }; // map buttons to pins
+static InputDebounce buttons[btnCount];
+static uint8_t btnValues[btnCount] = { 0, 0, 0 };
+static uint8_t btnStates[btnCount] = { 4, 2, 4 }; // 2 states is a toggle; 4 to rotate our waveforms
+
+void readEEPROM() {
+  EEPROM.readBlock<uint8_t>(0, btnValues, btnCount);
+}
+
+void updateEEPROM() {
+  EEPROM.updateBlock<uint8_t>(0, btnValues, btnCount);
+}
 
 // maps unpredictable inputs to a range
 int automap(int reading, int minOut, int maxOut, int defaultOut) {
@@ -313,6 +335,14 @@ void setup(){
   potAD_D = 200;
   gain[0] = 255;
 
+  for (int i = 0; i < btnCount; i++) {
+    // register callback functions (shared, used by all buttons)
+    buttons[i].registerCallbacks(btn_pressedCallback, btn_releasedCallback, btn_pressedDurationCallback, btn_releasedDurationCallback);
+    
+    // setup input buttons (debounced)
+    buttons[i].setup(btnPin[i], DEBOUNCE_DELAY, InputDebounce::PIM_INT_PULL_UP_RES); 
+  }
+
   startMozzi(CONTROL_RATE);
 }
 
@@ -331,11 +361,11 @@ void setFreqs(){
 //  aModulator.setFreq(mod_freq);
 
   aSin0.setFreq(carrier_freq);
-  aSin1.setFreq((carrier_freq+detune[0])*waves[harmonics][0]);
-  aSin2.setFreq((carrier_freq+detune[1])*waves[harmonics][1]);
-  aSin3.setFreq((carrier_freq+detune[2])*waves[harmonics][2]);
-  aSin4.setFreq((carrier_freq+detune[3])*waves[harmonics][3]);
-  aSin5.setFreq((carrier_freq+detune[4])*waves[harmonics][4]);
+  aSin1.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][0])*waves[harmonics][0]);
+  aSin2.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][1])*waves[harmonics][1]);
+  aSin3.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][2])*waves[harmonics][2]);
+  aSin4.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][3])*waves[harmonics][3]);
+  aSin5.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][4])*waves[harmonics][4]);
 }
 
 void setWavetable() {
@@ -437,6 +467,13 @@ void updateControl(){
 #ifdef USE_MIDI
   MIDI.read();
 #endif
+  unsigned long now = millis();
+
+  readSerial();
+  for (int i = 0; i < btnCount; i++) {
+    buttons[i].process(now);
+  }
+
   // Read the potentiometers - do one on each updateControl scan.
   potcount ++;
   if (potcount >= 6) potcount = 0;
@@ -498,9 +535,15 @@ void updateControl(){
   Serial.println (nextwave);
 #endif
 
+  // See if the wavetable changed...
+  if (btnValues[WAV_BTN] != wavetable) {
+    // Change the wavetable
+    wavetable = btnValues[WAV_BTN];
+    setWavetable();
+  }
+
   // Perform the regular "control" updates
   envelope.update();
-  readSerial();
 }
 
 // void updateControl() {
@@ -642,4 +685,42 @@ int updateAudio() {
 
 void loop(){
   audioHook();
+}
+
+void btn_pressedCallback(uint8_t pinIn)
+{
+  // handle pressed state
+   digitalWrite(LED, HIGH); // turn the LED on
+   Serial.print("BUTTON (pin: ");
+   Serial.print(pinIn);
+   Serial.println(")");
+}
+
+void btn_releasedCallback(uint8_t pinIn)
+{
+  // handle released state
+  digitalWrite(LED, LOW); // turn the LED on
+  const int btnIndex = pinBtn[pinIn];
+  btnValues[btnIndex] = (btnValues[btnIndex] + 1) % btnStates[btnIndex];
+}
+
+void btn_pressedDurationCallback(uint8_t pinIn, unsigned long duration)
+{
+  // handle still pressed state
+  // Serial.print("SEQ HIGH (pin: ");
+  // Serial.print(pinIn);
+  // Serial.print(") still pressed, duration ");
+  // Serial.print(duration);
+  // Serial.println("ms");
+  // writeBtnPitch(pinBtn[pinIn] - ctrlBtnCount);
+}
+
+void btn_releasedDurationCallback(uint8_t pinIn, unsigned long duration)
+{
+  // handle released state
+  // Serial.print("SEQ LOW (pin: ");
+  // Serial.print(pinIn);
+  // Serial.print("), duration ");
+  // Serial.print(duration);
+  // Serial.println("ms");
 }
