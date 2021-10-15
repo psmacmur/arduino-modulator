@@ -40,7 +40,7 @@
 
 #include <MozziGuts.h>
 #include <Oscil.h> // oscillator
-#include <tables/cos2048_int8.h> // for the modulation oscillators
+//#include <tables/cos2048_int8.h> // for the modulation oscillators
 #include <tables/sin2048_int8.h> // sine table for oscillator
 #include <tables/saw2048_int8.h> // saw table for oscillator
 #include <tables/triangle2048_int8.h> // triangle table for oscillator
@@ -71,8 +71,8 @@
 #define POT3   64
 #define POT4   32
 #define POT5   16
-
-#define WAVETABLE 2  // 0=Sine; 1=Triangle; 2=Saw; 3=Square
+const int WAVS = 4;
+#define WAVETABLE 2  // 3=Sine; 2=Triangle; 0=Saw; 1=Square
 
 // Set the MIDI Channel to listen on
 #define MIDI_CHANNEL 1
@@ -98,11 +98,13 @@ MIDI_CREATE_CUSTOM_INSTANCE(HardwareSerial, Serial, MIDI, MySettings);
 
 #define CONTROL_RATE 256 // Hz, powers of 2 are most reliable
 #define MIN_TRIG 1010
-#define DEBOUNCE_DELAY 150 // ms
+#define DEBOUNCE_DELAY 50 // ms
 
 #ifndef _BV
 #define _BV(bit) (1 << (bit)) 
 #endif
+
+const int ANALOG_MAX = 1023;
 
 //Oscil<COS2048_NUM_CELLS, AUDIO_RATE> aCarrier;  // Wavetable will be set later
 //Oscil<COS2048_NUM_CELLS, AUDIO_RATE> aModulator(COS2048_DATA);
@@ -113,24 +115,30 @@ Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin2;
 Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin3;
 Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin4;
 Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin5;
-#define HARMONICS 5
+Oscil <SIN2048_NUM_CELLS , AUDIO_RATE> aSin6;
+#define HARMONICS 6
 
 // Set up the multipliers
-#define NUMWAVES 6
+#define NUMWAVES 7
 int waves[NUMWAVES][HARMONICS] = {
-   {1, 1, 1, 1, 1},
-//   {1, 2, 2, 3, 3},
-   {2, 3, 4, 5, 6},
-   {2, 3, 5, 7, 9},
-   {3, 5, 7, 9, 11},
-   {2, 4, 6, 8, 10},
-   {2, 4, 8, 16, 32}
+   {1, 1, 1, 1, 1, 1},
+   {1, 3, 5, 7, 9, 11},
+   {3, 5, 7, 9, 11, 13},
+   {1, 2, 4, 6, 8, 10},
+   {2, 4, 6, 8, 10, 12},
+   {1, 2, 4, 8, 16, 32},
+   {2, 4, 8, 16, 32, 64}
 };
 
 // Optional offset for each harmonic compared to carrier freq.
 // Set to zero for "pure" harmonics.
 const int DETUNES = 4;
-int detune[DETUNES][HARMONICS] = {{ 0,0,0,0,0 }, { 1,1,1,1,1 }, { 1,2,3,4,5 }};
+int detune[DETUNES][HARMONICS] = {
+  { 1,-1,2,-2,5,-5 }, 
+  { 1,-1,3,-3,5,-5 }, 
+  { 1,-1,2,-2,3,-3 }, 
+  { 0,0,0,0,0,0 }
+};
 
 int harmonics; // currently active harmonics (vs the define, which is the number available)
 long nextwave;
@@ -142,7 +150,6 @@ int wavetable = WAVETABLE;
 int mod_ratio;
 int carrier_freq;
 //long fm_intensity;
-int adsr_a, adsr_d, adsr_r;
 int lastL;
 
 // smoothing for intensity to remove clicks on transitions
@@ -157,7 +164,10 @@ ADSR <CONTROL_RATE, AUDIO_RATE> envelope;
 const int ATTACK = 50;
 const int DECAY = 200;
 const int SUSTAIN = 10000;  // 10000 is so the note will sustain 10 seconds unless a noteOff comes
-const int RELEASE = 200;
+const int RELEASE = 300;
+int adsr_a, adsr_d, adsr_r;
+const int ENVELOPES = 3;
+int envelopes[ENVELOPES][3] = {{ ATTACK, DECAY, RELEASE }, { 0, DECAY, RELEASE }, { 0, DECAY, 0 }}; 
 
 #define LED LED_BUILTIN // shows if MIDI is being recieved
 
@@ -174,14 +184,14 @@ uint8_t lastPitch = 0;
 
 // Buttons & memory
 const int WAV_BTN = 0;
-const int UNISON_BTN = 1;
+const int ENV_BTN = 1;
 const int DETUNE_BTN = 2;
-const int btnCount = 3; // Cycle waveform, harmonics vs unison, detune
+const int btnCount = 3; // Cycle waveform, select envelope, detune
 const int pinBtn[16] = { 0, 0, 0, 0, 0, 0, 1, 0, 2, 0, 0, 0, 0, 0, 0, 0 }; // map pins to buttons
 const int btnPin[btnCount] = { 4, 6, 8 }; // map buttons to pins
 static InputDebounce buttons[btnCount];
 static uint8_t btnValues[btnCount] = { 0, 0, 0 };
-static uint8_t btnStates[btnCount] = { 4, 2, 4 }; // 2 states is a toggle; 4 to rotate our waveforms
+static uint8_t btnStates[btnCount] = { WAVS, ENVELOPES, DETUNES };
 
 void readEEPROM() {
   EEPROM.readBlock<uint8_t>(0, btnValues, btnCount);
@@ -213,7 +223,7 @@ void writeBtnPitch(uint8_t note) {
 //    Serial.println(note);
 #endif
     lastPitch = note;
-    HandleNoteOn (1, lastPitch, 127);
+    HandleNoteOn (1, lastPitch, 200);
 }
 
 // turn off any currently-playing note
@@ -366,6 +376,7 @@ void setFreqs(){
   aSin3.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][2])*waves[harmonics][2]);
   aSin4.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][3])*waves[harmonics][3]);
   aSin5.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][4])*waves[harmonics][4]);
+  aSin6.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][5])*waves[harmonics][5]);
 }
 
 void setWavetable() {
@@ -385,36 +396,40 @@ void setWavetable() {
 
   switch (wavetable) {
   case 1:
-    aSin0.setTable(TRIANGLE2048_DATA);
-    aSin1.setTable(TRIANGLE2048_DATA);
-    aSin2.setTable(TRIANGLE2048_DATA);
-    aSin3.setTable(TRIANGLE2048_DATA);
-    aSin4.setTable(TRIANGLE2048_DATA);
-    aSin5.setTable(TRIANGLE2048_DATA);
-    break;
-  case 2:
-    aSin0.setTable(SAW2048_DATA);
-    aSin1.setTable(SAW2048_DATA);
-    aSin2.setTable(SAW2048_DATA);
-    aSin3.setTable(SAW2048_DATA);
-    aSin4.setTable(SAW2048_DATA);
-    aSin5.setTable(SAW2048_DATA);
-    break;
-  case 3:
     aSin0.setTable(SQUARE_NO_ALIAS_2048_DATA);
     aSin1.setTable(SQUARE_NO_ALIAS_2048_DATA);
     aSin2.setTable(SQUARE_NO_ALIAS_2048_DATA);
     aSin3.setTable(SQUARE_NO_ALIAS_2048_DATA);
     aSin4.setTable(SQUARE_NO_ALIAS_2048_DATA);
     aSin5.setTable(SQUARE_NO_ALIAS_2048_DATA);
+    aSin6.setTable(SQUARE_NO_ALIAS_2048_DATA);
     break;
-  default: // case 0
+  case 2:
+    aSin0.setTable(TRIANGLE2048_DATA);
+    aSin1.setTable(TRIANGLE2048_DATA);
+    aSin2.setTable(TRIANGLE2048_DATA);
+    aSin3.setTable(TRIANGLE2048_DATA);
+    aSin4.setTable(TRIANGLE2048_DATA);
+    aSin5.setTable(TRIANGLE2048_DATA);
+    aSin6.setTable(TRIANGLE2048_DATA);
+    break;
+  case 3:
     aSin0.setTable(SIN2048_DATA);
     aSin1.setTable(SIN2048_DATA);
     aSin2.setTable(SIN2048_DATA);
     aSin3.setTable(SIN2048_DATA);
     aSin4.setTable(SIN2048_DATA);
     aSin5.setTable(SIN2048_DATA);
+    aSin6.setTable(SIN2048_DATA);
+    break;
+  default: // case 0
+    aSin0.setTable(SAW2048_DATA);
+    aSin1.setTable(SAW2048_DATA);
+    aSin2.setTable(SAW2048_DATA);
+    aSin3.setTable(SAW2048_DATA);
+    aSin4.setTable(SAW2048_DATA);
+    aSin5.setTable(SAW2048_DATA);
+    aSin6.setTable(SAW2048_DATA);
   }
 }
 
@@ -445,8 +460,9 @@ void readSerial() {
   }
   if (chPos > 0) {
     cString[chPos] = '\0';
+#ifdef DEBUG
     Serial.println(cString);
-
+#endif
     const int touchedButton = parseCharToHex(cString[0]);
 //    Serial.println(touchedButton);
 //    Serial.println(cString[1]);
@@ -482,17 +498,21 @@ void updateControl(){
 #ifdef POT0
     int newharms = POT0;
 #else
-    int newharms = mozziAnalogRead(potcount) >> 7;  // Range 0 to 7
+    int newharms = map(mozziAnalogRead(potcount), 0, ANALOG_MAX, 0, NUMWAVES);  // Range 0 to 7
 #endif
     if (newharms >= NUMWAVES) newharms = NUMWAVES-1;
     if (newharms != harmonics) {
       harmonics = newharms;
+#ifdef DEBUG
+      Serial.print("harmonics: ");
+      Serial.println(harmonics);
+#endif
       setFreqs();
     }
   } else if (potcount == 1) {
-     gain[potcount] = mozziAnalogRead(potcount) >> 2;  // Range 0 to 255
+     gain[potcount] = map(mozziAnalogRead(potcount), 0, ANALOG_MAX, 0, 255);  // Range 0 to 255
   } else {
-     gain[potcount] = max(0, gain[potcount - 1] - abs(gain[potcount - 1] - gain[potcount - 2]));
+     gain[potcount] = max(0, gain[potcount - 1] - abs(gain[potcount - 2] - gain[potcount - 1]));
      // See if we have to replace any potentiometer readings with fixed values
 //#ifdef POT1
 //     if (potcount == 1) gain[potcount] = POT1;
@@ -542,6 +562,11 @@ void updateControl(){
     setWavetable();
   }
 
+  adsr_a = envelopes[btnValues[ENV_BTN]][0];
+  adsr_d = envelopes[btnValues[ENV_BTN]][1];
+  adsr_r = envelopes[btnValues[ENV_BTN]][2];
+  setEnvelope(SUSTAIN);
+  
   // Perform the regular "control" updates
   envelope.update();
 }
@@ -567,12 +592,12 @@ void updateControl(){
 //     break;
 //   case 1:
 // #ifdef INTS_PIN
-//     potINTS = automap(mozziAnalogRead(INTS_PIN), 0, 1023, potINTS); // value is 0-1023
+//     potINTS = automap(mozziAnalogRead(INTS_PIN), 0, ANALOG_MAX, potINTS); // value is 0-1023
 // #endif
 //     break;
 //   case 2:
 // #ifdef RATE_PIN
-//     potRATE = automap(mozziAnalogRead(RATE_PIN), 0, 1023, potRATE); // value is 0-1023
+//     potRATE = automap(mozziAnalogRead(RATE_PIN), 0, ANALOG_MAX, potRATE); // value is 0-1023
 // #endif
 //     break;
 //   case 3:
@@ -691,9 +716,11 @@ void btn_pressedCallback(uint8_t pinIn)
 {
   // handle pressed state
    digitalWrite(LED, HIGH); // turn the LED on
+#ifdef DEBUG
    Serial.print("BUTTON (pin: ");
    Serial.print(pinIn);
    Serial.println(")");
+#endif
 }
 
 void btn_releasedCallback(uint8_t pinIn)
