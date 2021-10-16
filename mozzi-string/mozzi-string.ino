@@ -41,10 +41,16 @@
 #include <MozziGuts.h>
 #include <Oscil.h> // oscillator
 //#include <tables/cos2048_int8.h> // for the modulation oscillators
-#include <tables/sin2048_int8.h> // sine table for oscillator
 #include <tables/saw2048_int8.h> // saw table for oscillator
-#include <tables/triangle2048_int8.h> // triangle table for oscillator
 #include <tables/square_no_alias_2048_int8.h> // square table for oscillator
+#include <tables/sin2048_int8.h> // sine table for oscillator
+#include <tables/triangle2048_int8.h> // triangle table for oscillator
+#include <tables/triangle_dist_cubed_2048_int8.h> // analog tri table for oscillator
+#include <tables/triangle_dist_squared_2048_int8.h> // analog tri table for oscillator
+#include <tables/triangle_hermes_2048_int8.h> // analog tri table for oscillator
+#include <tables/triangle_valve_2048_int8.h> // analog tri table for oscillator
+#include <tables/triangle_valve_2_2048_int8.h> // analog tri table for oscillator
+
 #include <mozzi_midi.h>
 //#include <Smooth.h>
 #include <ADSR.h>
@@ -71,8 +77,8 @@
 #define POT3   64
 #define POT4   32
 #define POT5   16
-const int WAVS = 4;
-#define WAVETABLE 2  // 3=Sine; 2=Triangle; 0=Saw; 1=Square
+const int WAVS = 9;
+#define WAVETABLE 2  // 3=Sine; 2=Triangle; 0=Saw; 1=Square; 4=analog tri
 
 // Set the MIDI Channel to listen on
 #define MIDI_CHANNEL 1
@@ -163,11 +169,17 @@ int potWAVT, potMODR, potINTS, potRATE, potAD_A, potAD_D;
 ADSR <CONTROL_RATE, AUDIO_RATE> envelope;
 const int ATTACK = 50;
 const int DECAY = 200;
-const int SUSTAIN = 10000;  // 10000 is so the note will sustain 10 seconds unless a noteOff comes
+const int SUSTAIN_TIME = 10000;  // 10000 is so the note will sustain 10 seconds unless a noteOff comes
+const int SUSTAIN_LEVEL_DECAY = 128;  // 10000 is so the note will sustain 10 seconds unless a noteOff comes
+const int SUSTAIN_LEVEL_ORGAN = 255;  // 10000 is so the note will sustain 10 seconds unless a noteOff comes
 const int RELEASE = 300;
-int adsr_a, adsr_d, adsr_r;
-const int ENVELOPES = 3;
-int envelopes[ENVELOPES][3] = {{ ATTACK, DECAY, RELEASE }, { 0, DECAY, RELEASE }, { 0, DECAY, 0 }}; 
+int adsr_a, adsr_d, adsr_s, adsr_r;
+const int ENVELOPES = 3; 
+int envelopes[ENVELOPES][4] = {
+  { ATTACK, DECAY, SUSTAIN_LEVEL_DECAY, RELEASE }, 
+  { 0, DECAY, SUSTAIN_LEVEL_DECAY, RELEASE }, 
+  { 0, 0, SUSTAIN_LEVEL_ORGAN, 0 }
+}; 
 
 #define LED LED_BUILTIN // shows if MIDI is being recieved
 
@@ -176,9 +188,10 @@ SoftwareSerial link(10, 11); // Rx, Tx
 const int nPads = 12;
 bool touched[nPads];
 uint8_t sequence[nPads] = { 
+  
   60, 63, 65, 67,
-  70, 72, 75, 77,
-  79, 82, 84, 87
+  70, 72, 75, 77//,
+  // 79, 82, 84, 87
 };
 uint8_t lastPitch = 0;
 
@@ -277,17 +290,18 @@ void HandleNoteOn(byte channel, byte note, byte velocity) {
       return;
   }
   envelope.noteOff(); // Stop any already playing note
-  carrier_freq = mtof(note);
+  carrier_freq = mtof(note); 
   setFreqs();
   envelope.noteOn();
   digitalWrite(LED, HIGH);
 }
 
 void HandleNoteOff(byte channel, byte note, byte velocity) {
-  if (carrier_freq == mtof(note)) {
+  // if (carrier_freq == mtof(note)) {
     // If we are still playing the same note, turn it off
     envelope.noteOff();
-  }
+    carrier_freq = 0;
+  // }
 
   digitalWrite(LED, LOW);
 }
@@ -330,7 +344,7 @@ void setup(){
   adsr_a = ATTACK;//50;
   adsr_d = DECAY;//200;
   adsr_r = RELEASE;
-  setEnvelope(SUSTAIN);
+  setEnvelope(SUSTAIN_TIME);
 
   wavetable = WAVETABLE;
   setWavetable();
@@ -357,7 +371,7 @@ void setup(){
 }
 
 void setEnvelope(unsigned int sustain) {
-  envelope.setADLevels(255, 64);
+  envelope.setADLevels(255, adsr_s);
 //  envelope.setTimes(adsr_a, adsr_d, max(0, sustain - (200 + adsr_a + adsr_d)), 200);
   envelope.setTimes(adsr_a, adsr_d, sustain, adsr_r);
 }
@@ -405,6 +419,15 @@ void setWavetable() {
     aSin6.setTable(SQUARE_NO_ALIAS_2048_DATA);
     break;
   case 2:
+    aSin0.setTable(SIN2048_DATA);
+    aSin1.setTable(SIN2048_DATA);
+    aSin2.setTable(SIN2048_DATA);
+    aSin3.setTable(SIN2048_DATA);
+    aSin4.setTable(SIN2048_DATA);
+    aSin5.setTable(SIN2048_DATA);
+    aSin6.setTable(SIN2048_DATA);
+    break;
+  case 3:
     aSin0.setTable(TRIANGLE2048_DATA);
     aSin1.setTable(TRIANGLE2048_DATA);
     aSin2.setTable(TRIANGLE2048_DATA);
@@ -413,14 +436,50 @@ void setWavetable() {
     aSin5.setTable(TRIANGLE2048_DATA);
     aSin6.setTable(TRIANGLE2048_DATA);
     break;
-  case 3:
-    aSin0.setTable(SIN2048_DATA);
-    aSin1.setTable(SIN2048_DATA);
-    aSin2.setTable(SIN2048_DATA);
-    aSin3.setTable(SIN2048_DATA);
-    aSin4.setTable(SIN2048_DATA);
-    aSin5.setTable(SIN2048_DATA);
-    aSin6.setTable(SIN2048_DATA);
+  case 4:
+    aSin0.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
+    aSin1.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
+    aSin2.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
+    aSin3.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
+    aSin4.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
+    aSin5.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
+    aSin6.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
+    break;
+  case 5:
+    aSin0.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
+    aSin1.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
+    aSin2.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
+    aSin3.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
+    aSin4.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
+    aSin5.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
+    aSin6.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
+    break;
+  case 6:
+    aSin0.setTable(TRIANGLE_HERMES_2048_DATA);
+    aSin1.setTable(TRIANGLE_HERMES_2048_DATA);
+    aSin2.setTable(TRIANGLE_HERMES_2048_DATA);
+    aSin3.setTable(TRIANGLE_HERMES_2048_DATA);
+    aSin4.setTable(TRIANGLE_HERMES_2048_DATA);
+    aSin5.setTable(TRIANGLE_HERMES_2048_DATA);
+    aSin6.setTable(TRIANGLE_HERMES_2048_DATA);
+    break;
+  case 7:
+    aSin0.setTable(TRIANGLE_VALVE_2048_DATA);
+    aSin1.setTable(TRIANGLE_VALVE_2048_DATA);
+    aSin2.setTable(TRIANGLE_VALVE_2048_DATA);
+    aSin3.setTable(TRIANGLE_VALVE_2048_DATA);
+    aSin4.setTable(TRIANGLE_VALVE_2048_DATA);
+    aSin5.setTable(TRIANGLE_VALVE_2048_DATA);
+    aSin6.setTable(TRIANGLE_VALVE_2048_DATA);
+    break;
+  case 8:
+    aSin0.setTable(TRIANGLE_VALVE_2_2048_DATA);
+    aSin1.setTable(TRIANGLE_VALVE_2_2048_DATA);
+    aSin2.setTable(TRIANGLE_VALVE_2_2048_DATA);
+    aSin3.setTable(TRIANGLE_VALVE_2_2048_DATA);
+    aSin4.setTable(TRIANGLE_VALVE_2_2048_DATA);
+    aSin5.setTable(TRIANGLE_VALVE_2_2048_DATA);
+    aSin6.setTable(TRIANGLE_VALVE_2_2048_DATA);
     break;
   default: // case 0
     aSin0.setTable(SAW2048_DATA);
@@ -564,8 +623,9 @@ void updateControl(){
 
   adsr_a = envelopes[btnValues[ENV_BTN]][0];
   adsr_d = envelopes[btnValues[ENV_BTN]][1];
-  adsr_r = envelopes[btnValues[ENV_BTN]][2];
-  setEnvelope(SUSTAIN);
+  adsr_s = envelopes[btnValues[ENV_BTN]][2];
+  adsr_r = envelopes[btnValues[ENV_BTN]][3];
+  setEnvelope(SUSTAIN_TIME);
   
   // Perform the regular "control" updates
   envelope.update();
