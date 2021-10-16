@@ -39,8 +39,11 @@
 //#include <MIDI.h>
 
 #include <MozziGuts.h>
-#include <Oscil.h> // oscillator
-//#include <tables/cos2048_int8.h> // for the modulation oscillators
+#include <mozzi_midi.h> // for mtof
+#include <Oscil.h>      // oscillator
+#include <ADSR.h>       // envelope
+// #include <LowPassFilter.h>
+// #include <tables/cos2048_int8.h> // for the modulation oscillators
 #include <tables/saw2048_int8.h> // saw table for oscillator
 #include <tables/square_no_alias_2048_int8.h> // square table for oscillator
 #include <tables/sin2048_int8.h> // sine table for oscillator
@@ -50,14 +53,13 @@
 #include <tables/triangle_hermes_2048_int8.h> // analog tri table for oscillator
 #include <tables/triangle_valve_2048_int8.h> // analog tri table for oscillator
 #include <tables/triangle_valve_2_2048_int8.h> // analog tri table for oscillator
-
-#include <mozzi_midi.h>
 //#include <Smooth.h>
-#include <ADSR.h>
-#include <mozzi_rand.h>
+// #include <mozzi_rand.h>
+
 #include <InputDebounce.h>
 #include <EEPROMex.h>
 #include <EEPROMVar.h>
+
 //Receiver code
 #include <SoftwareSerial.h>
 
@@ -71,21 +73,19 @@
 
 #define MCP4725ADDR (0x60)
 
-//#define POT0   0    // Uncomment to disable the potentiometers and used fixed readings
-//#define POT1   255
-#define POT2   128
-#define POT3   64
-#define POT4   32
-#define POT5   16
+#define POTS 2
+
 const int WAVS = 9;
-#define WAVETABLE 2  // 3=Sine; 2=Triangle; 0=Saw; 1=Square; 4=analog tri
+#define WAVETABLE 0  // 0 = Saw; 1 = Square; 2 = Sine; 3+ = Triangle
 
 // Set the MIDI Channel to listen on
 #define MIDI_CHANNEL 1
 
 // Set up the analog inputs - comment out if you aren't using this one
+#define HARMONICS_PIN 0
+#define GAIN_PIN 1
 //#define WAVT_PIN 0  // Wavetable
-#define INTS_PIN 3  // FM intensity
+// #define INTS_PIN 3  // FM intensity
 // #define RATE_PIN 7  // Modulation Rate
 //#define MODR_PIN 3  // Modulation Ratio
 //#define AD_A_PIN 4  // ADSR Attack
@@ -115,14 +115,11 @@ const int ANALOG_MAX = 1023;
 //Oscil<COS2048_NUM_CELLS, AUDIO_RATE> aCarrier;  // Wavetable will be set later
 //Oscil<COS2048_NUM_CELLS, AUDIO_RATE> aModulator(COS2048_DATA);
 //Oscil<COS2048_NUM_CELLS, CONTROL_RATE> kIntensityMod(COS2048_DATA);
-Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin0;  // Wavetables will be set later
-Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin1;
-Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin2;
-Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin3;
-Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin4;
-Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin5;
-Oscil <SIN2048_NUM_CELLS , AUDIO_RATE> aSin6;
+// Oscil<COS2048_NUM_CELLS, CONTROL_RATE> kFilterMod(COS2048_DATA);
 #define HARMONICS 6
+Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> oscs[HARMONICS + 1];  // Wavetables will be set later
+
+// LowPassFilter lpf;
 
 // Set up the multipliers
 #define NUMWAVES 7
@@ -146,12 +143,13 @@ int detune[DETUNES][HARMONICS] = {
   { 0,0,0,0,0,0 }
 };
 
-int harmonics; // currently active harmonics (vs the define, which is the number available)
+int harmonics; // index of the currently active harmonic set (vs the define, which is the number available)
 long nextwave;
 long lastwave;
  
-int gain[HARMONICS+1];  // [0] is the fixed gain for the carrier
-int gainscale;
+const int gain = 255;  // [0] is the fixed gain for the carrier
+int gainscale = 0;
+int gainDelta = 0;
 int wavetable = WAVETABLE;
 int mod_ratio;
 int carrier_freq;
@@ -162,11 +160,11 @@ int lastL;
 //float smoothness = 0.95f;
 //Smooth <long> aSmoothIntensity(smoothness);
  
-int potcount;
-int potWAVT, potMODR, potINTS, potRATE, potAD_A, potAD_D;
+// int potWAVT, potMODR, potINTS, potRATE, potAD_A, potAD_D;
 
 // envelope generator
 ADSR <CONTROL_RATE, AUDIO_RATE> envelope;
+// ADSR <CONTROL_RATE, CONTROL_RATE> filterEnvelope;
 const int ATTACK = 50;
 const int DECAY = 200;
 const int SUSTAIN_TIME = 10000;  // 10000 is so the note will sustain 10 seconds unless a noteOff comes
@@ -174,7 +172,11 @@ const int SUSTAIN_LEVEL_DECAY = 128;  // 10000 is so the note will sustain 10 se
 const int SUSTAIN_LEVEL_ORGAN = 255;  // 10000 is so the note will sustain 10 seconds unless a noteOff comes
 const int RELEASE = 300;
 int adsr_a, adsr_d, adsr_s, adsr_r;
-const int ENVELOPES = 3; 
+// byte cutoff_freq = 255;  // filter range (0-255) corresponds with 0-8191Hz
+// uint8_t resonance = 10; // range 0-255, 255 is most resonant
+
+const int ENVELOPES = 3;
+int envelopeIndex = 0;
 int envelopes[ENVELOPES][4] = {
   { ATTACK, DECAY, SUSTAIN_LEVEL_DECAY, RELEASE }, 
   { 0, DECAY, SUSTAIN_LEVEL_DECAY, RELEASE }, 
@@ -188,7 +190,7 @@ SoftwareSerial link(10, 11); // Rx, Tx
 const int nPads = 12;
 bool touched[nPads];
 uint8_t sequence[nPads] = { 
-  
+  48, 51, 55, 58,
   60, 63, 65, 67,
   70, 72, 75, 77//,
   // 79, 82, 84, 87
@@ -285,14 +287,14 @@ void dacWrite (uint16_t value) {
 }
 
 void HandleNoteOn(byte channel, byte note, byte velocity) {
-   if (velocity == 0) {
-      HandleNoteOff(channel, note, velocity);
+  HandleNoteOff(channel, note, velocity); // Stop any already playing note
+  if (velocity == 0) {
       return;
   }
-  envelope.noteOff(); // Stop any already playing note
   carrier_freq = mtof(note); 
   setFreqs();
   envelope.noteOn();
+  // filterEnvelope.noteOn();
   digitalWrite(LED, HIGH);
 }
 
@@ -300,6 +302,7 @@ void HandleNoteOff(byte channel, byte note, byte velocity) {
   // if (carrier_freq == mtof(note)) {
     // If we are still playing the same note, turn it off
     envelope.noteOff();
+    // filterEnvelope.noteOff();
     carrier_freq = 0;
   // }
 
@@ -344,20 +347,21 @@ void setup(){
   adsr_a = ATTACK;//50;
   adsr_d = DECAY;//200;
   adsr_r = RELEASE;
+  // lpf.setCutoffFreqAndResonance(cutoff_freq, resonance);
   setEnvelope(SUSTAIN_TIME);
 
   wavetable = WAVETABLE;
   setWavetable();
 
   // Set default parameters for any potentially unused/unread pots
-  potcount = 0;
-  potWAVT = 2;
-  potMODR = 5;
-  potINTS = 500;
-  potRATE = 150;
-  potAD_A = 50;
-  potAD_D = 200;
-  gain[0] = 255;
+  // potcount = 0;
+  // potWAVT = 2;
+  // potMODR = 5;
+  // potINTS = 500;
+  // potRATE = 150;
+  // potAD_A = 50;
+  // potAD_D = 200;
+  rescaleGains();
 
   for (int i = 0; i < btnCount; i++) {
     // register callback functions (shared, used by all buttons)
@@ -374,6 +378,10 @@ void setEnvelope(unsigned int sustain) {
   envelope.setADLevels(255, adsr_s);
 //  envelope.setTimes(adsr_a, adsr_d, max(0, sustain - (200 + adsr_a + adsr_d)), 200);
   envelope.setTimes(adsr_a, adsr_d, sustain, adsr_r);
+
+  // filterEnvelope.setADLevels(255, adsr_s);
+//  envelope.setTimes(adsr_a, adsr_d, max(0, sustain - (200 + adsr_a + adsr_d)), 200);
+  // filterEnvelope.setTimes(adsr_a, adsr_d, sustain, adsr_r);
 }
 
 void setFreqs(){
@@ -384,13 +392,16 @@ void setFreqs(){
 //  aCarrier.setFreq(carrier_freq);
 //  aModulator.setFreq(mod_freq);
 
-  aSin0.setFreq(carrier_freq);
-  aSin1.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][0])*waves[harmonics][0]);
-  aSin2.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][1])*waves[harmonics][1]);
-  aSin3.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][2])*waves[harmonics][2]);
-  aSin4.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][3])*waves[harmonics][3]);
-  aSin5.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][4])*waves[harmonics][4]);
-  aSin6.setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][5])*waves[harmonics][5]);
+  oscs[0].setFreq(carrier_freq);
+  for (int i = 0; i < HARMONICS; i++) {
+    oscs[i + 1].setFreq((carrier_freq+detune[btnValues[DETUNE_BTN]][i])*waves[harmonics][i]);
+  }
+}
+
+void setTables(const int8_t * table) {
+  for (int i = 0; i <= HARMONICS; i++) {
+    oscs[i].setTable(table);
+  }
 }
 
 void setWavetable() {
@@ -410,85 +421,31 @@ void setWavetable() {
 
   switch (wavetable) {
   case 1:
-    aSin0.setTable(SQUARE_NO_ALIAS_2048_DATA);
-    aSin1.setTable(SQUARE_NO_ALIAS_2048_DATA);
-    aSin2.setTable(SQUARE_NO_ALIAS_2048_DATA);
-    aSin3.setTable(SQUARE_NO_ALIAS_2048_DATA);
-    aSin4.setTable(SQUARE_NO_ALIAS_2048_DATA);
-    aSin5.setTable(SQUARE_NO_ALIAS_2048_DATA);
-    aSin6.setTable(SQUARE_NO_ALIAS_2048_DATA);
+    setTables(SQUARE_NO_ALIAS_2048_DATA);
     break;
   case 2:
-    aSin0.setTable(SIN2048_DATA);
-    aSin1.setTable(SIN2048_DATA);
-    aSin2.setTable(SIN2048_DATA);
-    aSin3.setTable(SIN2048_DATA);
-    aSin4.setTable(SIN2048_DATA);
-    aSin5.setTable(SIN2048_DATA);
-    aSin6.setTable(SIN2048_DATA);
+    setTables(SIN2048_DATA);
     break;
   case 3:
-    aSin0.setTable(TRIANGLE2048_DATA);
-    aSin1.setTable(TRIANGLE2048_DATA);
-    aSin2.setTable(TRIANGLE2048_DATA);
-    aSin3.setTable(TRIANGLE2048_DATA);
-    aSin4.setTable(TRIANGLE2048_DATA);
-    aSin5.setTable(TRIANGLE2048_DATA);
-    aSin6.setTable(TRIANGLE2048_DATA);
+    setTables(TRIANGLE2048_DATA);
     break;
   case 4:
-    aSin0.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
-    aSin1.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
-    aSin2.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
-    aSin3.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
-    aSin4.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
-    aSin5.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
-    aSin6.setTable(TRIANGLE_DIST_CUBED_2048_DATA);
+    setTables(TRIANGLE_DIST_CUBED_2048_DATA);
     break;
   case 5:
-    aSin0.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
-    aSin1.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
-    aSin2.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
-    aSin3.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
-    aSin4.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
-    aSin5.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
-    aSin6.setTable(TRIANGLE_DIST_SQUARED_2048_DATA);
+    setTables(TRIANGLE_DIST_SQUARED_2048_DATA);
     break;
   case 6:
-    aSin0.setTable(TRIANGLE_HERMES_2048_DATA);
-    aSin1.setTable(TRIANGLE_HERMES_2048_DATA);
-    aSin2.setTable(TRIANGLE_HERMES_2048_DATA);
-    aSin3.setTable(TRIANGLE_HERMES_2048_DATA);
-    aSin4.setTable(TRIANGLE_HERMES_2048_DATA);
-    aSin5.setTable(TRIANGLE_HERMES_2048_DATA);
-    aSin6.setTable(TRIANGLE_HERMES_2048_DATA);
+    setTables(TRIANGLE_HERMES_2048_DATA);
     break;
   case 7:
-    aSin0.setTable(TRIANGLE_VALVE_2048_DATA);
-    aSin1.setTable(TRIANGLE_VALVE_2048_DATA);
-    aSin2.setTable(TRIANGLE_VALVE_2048_DATA);
-    aSin3.setTable(TRIANGLE_VALVE_2048_DATA);
-    aSin4.setTable(TRIANGLE_VALVE_2048_DATA);
-    aSin5.setTable(TRIANGLE_VALVE_2048_DATA);
-    aSin6.setTable(TRIANGLE_VALVE_2048_DATA);
+    setTables(TRIANGLE_VALVE_2048_DATA);
     break;
   case 8:
-    aSin0.setTable(TRIANGLE_VALVE_2_2048_DATA);
-    aSin1.setTable(TRIANGLE_VALVE_2_2048_DATA);
-    aSin2.setTable(TRIANGLE_VALVE_2_2048_DATA);
-    aSin3.setTable(TRIANGLE_VALVE_2_2048_DATA);
-    aSin4.setTable(TRIANGLE_VALVE_2_2048_DATA);
-    aSin5.setTable(TRIANGLE_VALVE_2_2048_DATA);
-    aSin6.setTable(TRIANGLE_VALVE_2_2048_DATA);
+    setTables(TRIANGLE_VALVE_2_2048_DATA);
     break;
   default: // case 0
-    aSin0.setTable(SAW2048_DATA);
-    aSin1.setTable(SAW2048_DATA);
-    aSin2.setTable(SAW2048_DATA);
-    aSin3.setTable(SAW2048_DATA);
-    aSin4.setTable(SAW2048_DATA);
-    aSin5.setTable(SAW2048_DATA);
-    aSin6.setTable(SAW2048_DATA);
+    setTables(SAW2048_DATA);
   }
 }
 
@@ -538,11 +495,28 @@ void readSerial() {
   }
 }
 
-void updateControl(){
+void rescaleGains() {
+  // Pre-estimate the eventual scaling factor required based on the
+  // combined gain by counting the number of divide by 2s required to
+  // get the total back under 256.  This is used in updateAudio for scaling.
+  gainscale = 0;
+  long gainval = 0;
+  for (int i = 0; i <= HARMONICS; i++) {
+    gainval += gain - (i * gainDelta);
+  }
+  gainval = 255 * gainval;
+  while (gainval > 255) {
+    gainscale++;
+    gainval >>= 1;
+  }
+}
+
+void updateControl() {
 #ifdef USE_MIDI
   MIDI.read();
 #endif
   unsigned long now = millis();
+  static int gainReduction = 0;
 
   readSerial();
   for (int i = 0; i < btnCount; i++) {
@@ -550,16 +524,18 @@ void updateControl(){
   }
 
   // Read the potentiometers - do one on each updateControl scan.
-  potcount ++;
-  if (potcount >= 6) potcount = 0;
+  // static int potcount = 0;
+  // if (potcount++ >= POTS) potcount = 0;
 
-  if (potcount == 0) {
+  // if (potcount == 0) {
 #ifdef POT0
     int newharms = POT0;
 #else
-    int newharms = map(mozziAnalogRead(potcount), 0, ANALOG_MAX, 0, NUMWAVES);  // Range 0 to 7
+    int newharms = map(mozziAnalogRead(HARMONICS_PIN), 0, ANALOG_MAX, 0, NUMWAVES);  // Range 0 to 7
 #endif
-    if (newharms >= NUMWAVES) newharms = NUMWAVES-1;
+    if (newharms >= NUMWAVES) {
+      newharms = NUMWAVES-1;
+    }
     if (newharms != harmonics) {
       harmonics = newharms;
 #ifdef DEBUG
@@ -568,51 +544,30 @@ void updateControl(){
 #endif
       setFreqs();
     }
-  } else if (potcount == 1) {
-     gain[potcount] = map(mozziAnalogRead(potcount), 0, ANALOG_MAX, 0, 255);  // Range 0 to 255
-  } else {
-     gain[potcount] = max(0, gain[potcount - 1] - abs(gain[potcount - 2] - gain[potcount - 1]));
-     // See if we have to replace any potentiometer readings with fixed values
-//#ifdef POT1
-//     if (potcount == 1) gain[potcount] = POT1;
-//#endif
-//#ifdef POT2
-//     if (potcount == 2) gain[potcount] = POT2;
-//#endif
-//#ifdef POT3
-//     if (potcount == 3) gain[potcount] = POT3;
-//#endif
-//#ifdef POT4
-//     if (potcount == 4) gain[potcount] = POT4;
-//#endif
-//#ifdef POT5
-//     if (potcount == 5) gain[potcount] = POT5;
-//#endif
-  }
-
-  // Pre-estimate the eventual scaling factor required based on the
-  // combined gain by counting the number of divide by 2s required to
-  // get the total back under 256.  This is used in updateAudio for scaling.
-  gainscale = 0;
-  long gainval = 255*(long)(gain[0]+gain[1]+gain[2]+gain[3]+gain[4]+gain[5]);
-  while (gainval > 255) {
-    gainscale++;
-    gainval >>= 1;
-  }
-
+  // } else if (potcount == 1) {
+    static const int MAX_GAIN_REDUCTION = 255 / HARMONICS;
+    const int reading = map(mozziAnalogRead(GAIN_PIN), 0, ANALOG_MAX, 0, MAX_GAIN_REDUCTION);
+    if (reading != gainDelta) {
+      gainDelta = reading;
+      rescaleGains();
 #ifdef DEBUG
-  Serial.print (harmonics);
-  Serial.print ("\t");
-  for (int i=0; i<6; i++) {
-    Serial.print (gain[i]);
-    Serial.print ("\t");
-  }
-  Serial.print (gainscale);
-  Serial.print ("\t");
-  Serial.print (lastwave);
-  Serial.print ("\t");
-  Serial.println (nextwave);
+      Serial.print("gainDelta: ");
+      Serial.print(gainDelta);
+      Serial.print(" / ");
+      Serial.println(MAX_GAIN_REDUCTION);
 #endif
+    }
+//  }
+
+// #ifdef DEBUG
+//   Serial.print (harmonics);
+//   Serial.print ("\t");
+//   Serial.print (gainscale);
+//   Serial.print ("\t");
+//   Serial.print (lastwave);
+//   Serial.print ("\t");
+//   Serial.println (nextwave);
+// #endif
 
   // See if the wavetable changed...
   if (btnValues[WAV_BTN] != wavetable) {
@@ -621,118 +576,31 @@ void updateControl(){
     setWavetable();
   }
 
-  adsr_a = envelopes[btnValues[ENV_BTN]][0];
-  adsr_d = envelopes[btnValues[ENV_BTN]][1];
-  adsr_s = envelopes[btnValues[ENV_BTN]][2];
-  adsr_r = envelopes[btnValues[ENV_BTN]][3];
-  setEnvelope(SUSTAIN_TIME);
+  if (envelopeIndex != btnValues[ENV_BTN]) {
+    envelopeIndex = btnValues[ENV_BTN];
+    adsr_a = envelopes[envelopeIndex][0];
+    adsr_d = envelopes[envelopeIndex][1];
+    adsr_s = envelopes[envelopeIndex][2];
+    adsr_r = envelopes[envelopeIndex][3];
+    setEnvelope(SUSTAIN_TIME);
+    // lpf.setCutoffFreqAndResonance(cutoff_freq, resonance);
+  }
   
   // Perform the regular "control" updates
   envelope.update();
+  // filterEnvelope.update();
+
+  // map the modulation into the filter range (0-255), corresponds with 0-8191Hz
+  // cutoff_freq = filterEnvelope.next();
 }
 
-// void updateControl() {
-// #ifndef TEST_NOTE
-//   MIDI.read();
-// #endif
-//     static unsigned long lastTriggerMs = 0;
-//     static int lastRead = 0;
-//     static const int trigPin = A1;
-//     unsigned long now = millis();
-
-//   // Read the potentiometers - do one on each updateControl scan.
-//   // Note: each potXXXX value is remembered between scans.
-//   potcount ++;
-//   if (potcount >= 6) potcount = 0;
-//   switch (potcount) {
-//   case 0:
-// #ifdef WAVT_PIN
-//     potWAVT = mozziAnalogRead(WAVT_PIN) >> 8; // value is 0-3
-// #endif
-//     break;
-//   case 1:
-// #ifdef INTS_PIN
-//     potINTS = automap(mozziAnalogRead(INTS_PIN), 0, ANALOG_MAX, potINTS); // value is 0-1023
-// #endif
-//     break;
-//   case 2:
-// #ifdef RATE_PIN
-//     potRATE = automap(mozziAnalogRead(RATE_PIN), 0, ANALOG_MAX, potRATE); // value is 0-1023
-// #endif
-//     break;
-//   case 3:
-// #ifdef MODR_PIN
-//     potMODR = mozziAnalogRead(MODR_PIN) >> 7; // value is 0-7
-// #endif
-//     break;
-//   case 4:
-// #ifdef AD_A_PIN
-//     potAD_A = mozziAnalogRead(AD_A_PIN) >> 3; // value is 0-255
-// #endif
-//     break;
-//   case 5:
-// #ifdef AD_D_PIN
-//     potAD_D = mozziAnalogRead(AD_D_PIN) >> 3; // value is 0-255
-// #endif
-//     break;
-//   default:
-//     potcount = 0;
-//   }
-
-// #ifdef TEST_NOTE
-// #ifdef DEBUG
-// //  Serial.print(potWAVT); Serial.print("\t");
-// //  Serial.print(potINTS); Serial.print("\t");
-// //  Serial.print(potRATE); Serial.print("\t");
-// //  Serial.print(potMODR); Serial.print("\t");
-// //  Serial.print(potAD_A); Serial.print("\t");
-// //  Serial.print(potAD_D); Serial.print("\t");
-// #endif
-// #endif
-
-//   // See if the wavetable changed...
-//   if (potWAVT != wavetable) {
-//     // Change the wavetable
-//     wavetable = potWAVT;
-//     setWavetable();
-//   }
-
-//   // See if the envelope changed...
-//   if ((potAD_A != adsr_a) || (potAD_D != adsr_d)) {
-//     // Change the envelope
-    
-//     adsr_a = potAD_A;
-//     adsr_d = potAD_D;
-//     setEnvelope(lastRead > 0 ? (lastTriggerMs - now) : 10000);
-//   }
-
-//   // Everything else we update every cycle anyway
-//   mod_ratio = potMODR;
-
-//   // Perform the regular "control" updates
-//   envelope.update();
-//   setFreqs();
-
-//  // calculate the fm_intensity
-//   fm_intensity = ((long)potINTS * (kIntensityMod.next()+128))>>8; // shift back to range after 8 bit multiply
-
-//   // use a float here for low frequencies
-//   float mod_speed = (float)potRATE/100;
-//   kIntensityMod.setFreq(mod_speed);
-
-//   readSerial();
-// }
-
-
 int updateAudio() {
-  lastwave = ((long)gain[0]*aSin0.next() +
-              gain[1]*aSin1.next() +
-              gain[2]*aSin2.next() +
-              gain[3]*aSin3.next() +
-              gain[4]*aSin4.next() +
-              gain[5]*aSin5.next()
-                 );
-  nextwave  = lastwave >> gainscale;
+  lastwave = 0;
+  for (int i = 0; i <= HARMONICS; i++) {
+    lastwave += (long)(gain - gainDelta * i) * oscs[i].next();
+  }
+  nextwave  = //lpf.next
+    ( lastwave >> gainscale );
 
   // long modulation = aSmoothIntensity.next(fm_intensity) * aModulator.next();
 //  return (int)((envelope.next() * aCarrier.phMod(modulation)) >> 8);
