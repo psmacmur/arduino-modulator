@@ -47,11 +47,11 @@
 #include <tables/saw2048_int8.h> // saw table for oscillator
 #include <tables/square_no_alias_2048_int8.h> // square table for oscillator
 #include <tables/sin2048_int8.h> // sine table for oscillator
-#include <tables/triangle2048_int8.h> // triangle table for oscillator
-#include <tables/triangle_dist_cubed_2048_int8.h> // analog tri table for oscillator
+// #include <tables/triangle2048_int8.h> // triangle table for oscillator
+// #include <tables/triangle_dist_cubed_2048_int8.h> // analog tri table for oscillator
 #include <tables/triangle_dist_squared_2048_int8.h> // analog tri table for oscillator
 #include <tables/triangle_hermes_2048_int8.h> // analog tri table for oscillator
-#include <tables/triangle_valve_2048_int8.h> // analog tri table for oscillator
+// #include <tables/triangle_valve_2048_int8.h> // analog tri table for oscillator
 #include <tables/triangle_valve_2_2048_int8.h> // analog tri table for oscillator
 //#include <Smooth.h>
 // #include <mozzi_rand.h>
@@ -75,7 +75,7 @@
 
 #define POTS 2
 
-const int WAVS = 9;
+const int WAVS = 6;
 #define WAVETABLE 0  // 0 = Saw; 1 = Square; 2 = Sine; 3+ = Triangle
 
 // Set the MIDI Channel to listen on
@@ -91,7 +91,7 @@ const int WAVS = 9;
 //#define AD_A_PIN 4  // ADSR Attack
 //#define AD_D_PIN 5  // ADSR Delayhttps://github.com/sensorium/Mozzi.git
 #define TEST_NOTE 50 // Comment out to test without MIDI
-//#define DEBUG     1  // Comment out to remove debugging info - can only be used with TEST_NOTE
+#define DEBUG     1  // Comment out to remove debugging info - can only be used with TEST_NOTE
                        // Note: This will probably cause "clipping" of the audio...
 
 #ifndef TEST_NOTE
@@ -144,8 +144,8 @@ int detune[DETUNES][HARMONICS] = {
 };
 
 int harmonics; // index of the currently active harmonic set (vs the define, which is the number available)
-long nextwave;
-long lastwave;
+// long nextwave;
+// long lastwave;
  
 const int gain = 255;  // [0] is the fixed gain for the carrier
 int gainscale = 0;
@@ -153,8 +153,6 @@ int gainDelta = 0;
 int wavetable = WAVETABLE;
 int mod_ratio;
 int carrier_freq;
-//long fm_intensity;
-int lastL;
 
 // smoothing for intensity to remove clicks on transitions
 //float smoothness = 0.95f;
@@ -287,10 +285,11 @@ void dacWrite (uint16_t value) {
 }
 
 void HandleNoteOn(byte channel, byte note, byte velocity) {
-  HandleNoteOff(channel, note, velocity); // Stop any already playing note
-  if (velocity == 0) {
+   if (velocity == 0) {
+      HandleNoteOff(channel, note, velocity);
       return;
   }
+  envelope.noteOff(); // Stop any already playing note
   carrier_freq = mtof(note); 
   setFreqs();
   envelope.noteOn();
@@ -303,7 +302,7 @@ void HandleNoteOff(byte channel, byte note, byte velocity) {
     // If we are still playing the same note, turn it off
     envelope.noteOff();
     // filterEnvelope.noteOff();
-    carrier_freq = 0;
+    // carrier_freq = 0;
   // }
 
   digitalWrite(LED, LOW);
@@ -353,15 +352,7 @@ void setup(){
   wavetable = WAVETABLE;
   setWavetable();
 
-  // Set default parameters for any potentially unused/unread pots
-  // potcount = 0;
-  // potWAVT = 2;
-  // potMODR = 5;
-  // potINTS = 500;
-  // potRATE = 150;
-  // potAD_A = 50;
-  // potAD_D = 200;
-  rescaleGains();
+  gainscale = rescaleGains();
 
   for (int i = 0; i < btnCount; i++) {
     // register callback functions (shared, used by all buttons)
@@ -427,21 +418,12 @@ void setWavetable() {
     setTables(SIN2048_DATA);
     break;
   case 3:
-    setTables(TRIANGLE2048_DATA);
-    break;
-  case 4:
-    setTables(TRIANGLE_DIST_CUBED_2048_DATA);
-    break;
-  case 5:
     setTables(TRIANGLE_DIST_SQUARED_2048_DATA);
     break;
-  case 6:
+  case 4:
     setTables(TRIANGLE_HERMES_2048_DATA);
     break;
-  case 7:
-    setTables(TRIANGLE_VALVE_2048_DATA);
-    break;
-  case 8:
+  case 5:
     setTables(TRIANGLE_VALVE_2_2048_DATA);
     break;
   default: // case 0
@@ -495,96 +477,100 @@ void readSerial() {
   }
 }
 
-void rescaleGains() {
+int rescaleGains() {
   // Pre-estimate the eventual scaling factor required based on the
   // combined gain by counting the number of divide by 2s required to
   // get the total back under 256.  This is used in updateAudio for scaling.
-  gainscale = 0;
   long gainval = 0;
   for (int i = 0; i <= HARMONICS; i++) {
     gainval += gain - (i * gainDelta);
   }
-  gainval = 255 * gainval;
+  gainval = 256 * gainval;
+
+  int gscale = 0;
   while (gainval > 255) {
-    gainscale++;
+    gscale++;
     gainval >>= 1;
   }
+
+  return gscale;
 }
 
 void updateControl() {
 #ifdef USE_MIDI
   MIDI.read();
 #endif
-  unsigned long now = millis();
+  static int duty = 0;
   static int gainReduction = 0;
+  unsigned long now = millis();
 
-  readSerial();
-  for (int i = 0; i < btnCount; i++) {
-    buttons[i].process(now);
+  switch(duty) {
+    case 0:
+      readSerial();
+      for (int i = 0; i < btnCount; i++) {
+        buttons[i].process(now);
+      }
+      break;
+    case 1: {
+        int newharms = map(mozziAnalogRead(HARMONICS_PIN), 0, ANALOG_MAX, 0, NUMWAVES);  // Range 0 to 7
+        if (newharms >= NUMWAVES) {
+          newharms = NUMWAVES-1;
+        }
+        if (newharms != harmonics) {
+          harmonics = newharms;
+    #ifdef DEBUG
+          Serial.print("harmonics: ");
+          Serial.println(harmonics);
+    #endif
+          setFreqs();
+        }
+      }
+      break;
+    case 2: {
+        static const int MAX_GAIN_REDUCTION = 255 / HARMONICS;
+        const int reading = map(mozziAnalogRead(GAIN_PIN), 0, ANALOG_MAX, 0, MAX_GAIN_REDUCTION);
+        if (reading != gainDelta) {
+          gainDelta = reading;
+          gainscale = rescaleGains();
+    #ifdef DEBUG
+          Serial.print("gainDelta: ");
+          Serial.print(gainDelta);
+          Serial.print(" / ");
+          Serial.println(MAX_GAIN_REDUCTION);
+    #endif
+        }
+  // #ifdef DEBUG
+  //   Serial.print (harmonics);
+  //   Serial.print ("\t");
+  //   Serial.print (gainscale);
+  //   Serial.print ("\t");
+  //   Serial.print (lastwave);
+  //   Serial.print ("\t");
+  //   Serial.println (nextwave);
+  // #endif
+      }
+      break;
+    case 3:
+      // See if the wavetable changed...
+      if (btnValues[WAV_BTN] != wavetable) {
+        // Change the wavetable
+        wavetable = btnValues[WAV_BTN];
+        setWavetable();
+      }
+
+      if (envelopeIndex != btnValues[ENV_BTN]) {
+        envelopeIndex = btnValues[ENV_BTN];
+        adsr_a = envelopes[envelopeIndex][0];
+        adsr_d = envelopes[envelopeIndex][1];
+        adsr_s = envelopes[envelopeIndex][2];
+        adsr_r = envelopes[envelopeIndex][3];
+        setEnvelope(SUSTAIN_TIME);
+        // lpf.setCutoffFreqAndResonance(cutoff_freq, resonance);
+      }
+      break;
   }
 
-  // Read the potentiometers - do one on each updateControl scan.
-  // static int potcount = 0;
-  // if (potcount++ >= POTS) potcount = 0;
-
-  // if (potcount == 0) {
-#ifdef POT0
-    int newharms = POT0;
-#else
-    int newharms = map(mozziAnalogRead(HARMONICS_PIN), 0, ANALOG_MAX, 0, NUMWAVES);  // Range 0 to 7
-#endif
-    if (newharms >= NUMWAVES) {
-      newharms = NUMWAVES-1;
-    }
-    if (newharms != harmonics) {
-      harmonics = newharms;
-#ifdef DEBUG
-      Serial.print("harmonics: ");
-      Serial.println(harmonics);
-#endif
-      setFreqs();
-    }
-  // } else if (potcount == 1) {
-    static const int MAX_GAIN_REDUCTION = 255 / HARMONICS;
-    const int reading = map(mozziAnalogRead(GAIN_PIN), 0, ANALOG_MAX, 0, MAX_GAIN_REDUCTION);
-    if (reading != gainDelta) {
-      gainDelta = reading;
-      rescaleGains();
-#ifdef DEBUG
-      Serial.print("gainDelta: ");
-      Serial.print(gainDelta);
-      Serial.print(" / ");
-      Serial.println(MAX_GAIN_REDUCTION);
-#endif
-    }
-//  }
-
-// #ifdef DEBUG
-//   Serial.print (harmonics);
-//   Serial.print ("\t");
-//   Serial.print (gainscale);
-//   Serial.print ("\t");
-//   Serial.print (lastwave);
-//   Serial.print ("\t");
-//   Serial.println (nextwave);
-// #endif
-
-  // See if the wavetable changed...
-  if (btnValues[WAV_BTN] != wavetable) {
-    // Change the wavetable
-    wavetable = btnValues[WAV_BTN];
-    setWavetable();
-  }
-
-  if (envelopeIndex != btnValues[ENV_BTN]) {
-    envelopeIndex = btnValues[ENV_BTN];
-    adsr_a = envelopes[envelopeIndex][0];
-    adsr_d = envelopes[envelopeIndex][1];
-    adsr_s = envelopes[envelopeIndex][2];
-    adsr_r = envelopes[envelopeIndex][3];
-    setEnvelope(SUSTAIN_TIME);
-    // lpf.setCutoffFreqAndResonance(cutoff_freq, resonance);
-  }
+  duty = (duty + 1) % 4;
   
   // Perform the regular "control" updates
   envelope.update();
@@ -594,12 +580,12 @@ void updateControl() {
   // cutoff_freq = filterEnvelope.next();
 }
 
-int updateAudio() {
-  lastwave = 0;
+int updateAudio() {    
+  long lastwave = 0;
   for (int i = 0; i <= HARMONICS; i++) {
     lastwave += (long)(gain - gainDelta * i) * oscs[i].next();
   }
-  nextwave  = //lpf.next
+  int nextwave  = //lpf.next
     ( lastwave >> gainscale );
 
   // long modulation = aSmoothIntensity.next(fm_intensity) * aModulator.next();
@@ -625,10 +611,10 @@ int updateAudio() {
 //  Serial.print(maxMozziVal);
 #endif
 
-  uint16_t dac = map(mozziVal, -32768, 32768, 0, 4096); // mozziVal >> 5;
-  dacWrite(max(0, min(4096, dac)));
+  uint16_t dac = map(mozziVal, -32767, 32767, 0, 4095);
+  // uint16_t dac = mozziVal >> 4;
+  dacWrite(constrain(dac, 0, 4095));
 #ifdef DEBUG
-  lastL = dac;
 //  Serial.print("\t>>\t");
 //  Serial.println(dac);
 #endif
