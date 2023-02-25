@@ -3,6 +3,6 @@
     "board": "arduino:avr:nano",
     "output": "../build",
     "port": "COM5",
-    "sketch": "mozzi-fm\\mozzi-fm.ino",
+    "sketch": "mozzi-string\\mozzi-string.ino",
     "configuration": "cpu=atmega328old"
 }

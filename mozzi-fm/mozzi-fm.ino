@@ -79,7 +79,7 @@ bool touched[nPads];
 //#define AD_A_PIN 4  // ADSR Attack
 //#define AD_D_PIN 5  // ADSR Delayhttps://github.com/sensorium/Mozzi.git
 #define TEST_NOTE 50 // Comment out to test without MIDI
-#define DEBUG     1  // Comment out to remove debugging info - can only be used with TEST_NOTE
+// #define DEBUG     1  // Comment out to remove debugging info - can only be used with TEST_NOTE
                        // Note: This will probably cause "clipping" of the audio...
 
 #ifndef TEST_NOTE
